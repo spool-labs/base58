@@ -1,0 +1,47 @@
+[package]
+name = "tape-base58-bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Standalone rather than a workspace member, so the published crate carries
+# neither these benchmarks nor the dependencies they need.
+[workspace]
+
+[dev-dependencies]
+bs58 = "0.5"
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+five8 = "1"
+tape-base58 = { path = ".." }
+
+[features]
+variable = ["tape-base58/variable"]
+
+[[bench]]
+name = "against"
+harness = false
+
+[[bench]]
+name = "codec"
+harness = false
+
+[[bench]]
+name = "encode32"
+harness = false
+
+[[bench]]
+name = "paths"
+harness = false
+
+[[bench]]
+name = "scalar"
+harness = false
+
+[[bench]]
+name = "variable"
+harness = false
+
+[profile.bench]
+opt-level = 3
+lto = "fat"
+codegen-units = 1

@@ -1,0 +1,12 @@
+tape-base58
+Copyright 2026 Tape Network
+
+The conversion algorithm — a base 58^5 intermediate form with fixed tables
+between base 2^32 words and base 58^5 limbs — follows Firedancer's fd_base58,
+Apache-2.0.
+https://github.com/firedancer-io/firedancer/tree/main/src/ballet/base58
+
+No Firedancer source is included. The tables in src/tables.rs are generated
+from the defining identities by tools/gen_tables.py.
+
+five8 by Kevin Heavey (MIT) informed the shape of the fixed-size entry points.
