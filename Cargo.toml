@@ -11,6 +11,10 @@ categories = ["encoding", "no-std"]
 
 exclude = ["BENCHMARKS.md"]
 
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = ['cfg(target_os, values("solana"))']
+
 [features]
 default = []
 variable = []

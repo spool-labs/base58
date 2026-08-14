@@ -1,0 +1,19 @@
+[package]
+name = "pda-bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+solana-program = "4.0"
+solana-system-interface = { version = "3.0", features = ["bincode"] }
+
+[profile.release]
+overflow-checks = false
+lto = "fat"
+codegen-units = 1
+
+[workspace]

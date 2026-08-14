@@ -409,10 +409,83 @@ M4, stock flags, `--features variable`:
 | 512 | 2.71 µs | 246 µs | 2.24 µs | 85.3 µs |
 | 1232 | 16.0 µs | 1.44 ms | 10.9 µs | 501 µs |
 
+## On chain
+
+The SBF target compiles none of the vector modules. What a program links is
+the portable codec, so these rows are that path against five8's scalar and
+bs58 inside the VM. Measured 2026-08-14 through Mollusk 0.15 on the Agave
+4.2 runtime, platform-tools v1.54, from its own harness:
+
+```sh
+cd bench/onchain
+rustup run stable ./run.sh          # CU table, needs cargo-build-sbf
+rustup run stable ./run.sh sizes    # one binary per codec
+```
+
+Unlike every table above, these rows are exact. The VM meters instructions,
+not time, so there is no machine column, no layout variance and no error
+bar. A re-run returns the same integers.
+
+Each op loops its codec over a black-boxed input, and the cost per call is
+the slope between a 10-iteration run and a 60-iteration run. The slope
+cancels the entrypoint, and a loop the optimizer hoisted would read as
+zero. Before anything is timed, a verification op feeds 200 fuzzed inputs
+through both crates on chain and requires identical encodings and mutual
+round-trips. Inputs are the ordinary kind: no leading zeros, 43 and 87
+character encodings.
+
+| CU per call | tape | five8 | bs58 | vs five8 | vs bs58 |
+|---|---|---|---|---|---|
+| `encode_32` | 744 | 1,231 | 9,520 | 1.7× | 13× |
+| `decode_32` | 770 | 1,609 | 7,658 | 2.1× | 9.9× |
+| `encode_64` | 1,741 | 3,015 | 35,704 | 1.7× | 21× |
+| `decode_64` | 2,382 | 4,589 | 27,814 | 1.9× | 12× |
+
+The lead is narrower than in the host tables because dispatch has nothing
+to reach here. Both crates run scalar, and what remains is the limb walk
+against five8's table walk.
+
+For scale, the same runtime prices PDA work like this.
+`create_program_address` costs 1,584 CU. `find_program_address` costs
+about 1,500 per bump it tries, 4,546 at bump 253. Creating the account
+behind a PDA, the `invoke_signed` CPI into the system program, is 1,772 CU
+past the entrypoint. Encoding a key costs less than half of one
+derivation, so the codec is noise next to routine PDA work in the same
+instruction.
+
+### Program size
+
+A program linking all four entry points carries 23.1 KB of codec, against
+21.4 KB for five8 and 3.7 KB for bs58. One entry point alone is smaller:
+4.3 KB for `encode_32`, 9.3 for `decode_32`, 8.5 for `encode_64`, 6.4 for
+`decode_64`, each measured as a minimal program deploying only that op.
+Size is deploy rent at about 6,960 lamports per byte, a one-time 0.16 SOL
+for the whole crate and 0.012 more than five8. It is not execution cost.
+The transaction cost model reads 8 CU per 32 KiB page of loaded program
+bytes, at most one page of difference here.
+
+The host encoders spell two digits at a time through an eight-kilobyte
+pair table. On SBF that table is rent, and the divisions it saves are a
+few ALU ops, so `to_chars` spells digit by digit there instead. The swap
+took the crate from 33.8 KB to 23.1 and costs 124 CU on `encode_32` and
+320 on `encode_64`. Decode never touched the table.
+
+Do not reach for `opt-level = "z"` to shrink further. The speed of this
+path is its unrolling, and `z` rolls the loops back up: the tape rows rise
+about four-fold while the binary only loses a quarter of its bytes.
+
+The `variable` feature does not belong in a program. Its decode overflows
+the 4 KB SBF stack frame, and its tables are 420 KB of rent. The fixed
+paths never needed it.
+
 ## Known gaps
 
 - One machine per class. Both aarch64 parts agree on shape, so the NEON
   numbers are not Apple-specific, but neither is a Graviton.
+- The on-chain rows come from one runtime build, Mollusk 0.15 over Agave
+  4.2. CU prices are protocol constants, but they do move across major
+  releases, so a re-run should stamp its runtime the way the host rows
+  stamp the machine.
 - The Skylake part is a shared vCPU and its absolute numbers are three to four
   times the others; read it for the guard's behaviour and the AVX2-to-portable
   ratios, not for speed.
