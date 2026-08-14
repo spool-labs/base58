@@ -445,13 +445,13 @@ The lead is narrower than in the host tables because dispatch has nothing
 to reach here. Both crates run scalar, and what remains is the limb walk
 against five8's table walk.
 
-For scale, the same runtime prices PDA work like this.
-`create_program_address` costs 1,584 CU. `find_program_address` costs
-about 1,500 per bump it tries, 4,546 at bump 253. Creating the account
-behind a PDA, the `invoke_signed` CPI into the system program, is 1,772 CU
-past the entrypoint. Encoding a key costs less than half of one
-derivation, so the codec is noise next to routine PDA work in the same
-instruction.
+The five8 column is not a hypothetical. The SDK's address type spells
+`Display` through `five8::encode_32` and parses `FromStr` through
+`five8::decode_32` (solana-address 2.7.0), so a program on the current
+SDK pays that column whenever it logs or parses a pubkey, and the older
+SDK generations paid the bs58 column. Every `msg!("{}", pubkey)` runs one
+encode_32 before the log syscall sees a byte: 1,231 CU through the SDK
+today, 744 through this crate.
 
 ### Program size
 

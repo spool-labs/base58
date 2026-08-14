@@ -641,7 +641,6 @@ version = "0.0.0"
 dependencies = [
  "bs58",
  "mollusk-svm",
- "solana-account",
  "solana-instruction",
  "solana-pubkey",
 ]

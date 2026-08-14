@@ -7,8 +7,7 @@ publish = false
 [dependencies]
 mollusk-svm = "0.15"
 solana-instruction = "*"
-solana-pubkey = { version = "*", features = ["sha2", "curve25519"] }
-solana-account = "*"
+solana-pubkey = "*"
 bs58 = "0.5"
 
 [workspace]

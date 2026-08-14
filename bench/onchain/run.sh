@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# Builds both SBF programs and runs the Mollusk CU comparison.
+# Builds the SBF program and runs the Mollusk CU comparison.
 # `run.sh sizes` instead builds one .so per codec and prints section sizes.
 set -e
 cd "$(dirname "$0")"
@@ -19,7 +19,5 @@ if [ "$1" = "sizes" ]; then
 fi
 
 (cd program && cargo-build-sbf)
-(cd pda-program && cargo-build-sbf)
-cp pda-program/target/deploy/pda_bench.so program/target/deploy/
 (cd runner && cargo build --release)
 SBF_OUT_DIR="$PWD/program/target/deploy" RUST_LOG=off runner/target/release/cu-runner
