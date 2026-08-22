@@ -103,13 +103,18 @@ pub const MAX_ENCODED_32: usize = 44;
 pub const MAX_ENCODED_64: usize = 88;
 
 /// Encode a public key, returning how many bytes of the output were written
-pub fn encode_32(input: &[u8; KEY_LEN], out: &mut [u8; MAX_ENCODED_32]) -> usize {
-    backend::encode_32(input, out)
+///
+/// The count is a `u8` because `MAX_ENCODED_32` is 44, so it always fits, and
+/// callers holding it alongside a fixed-width buffer keep it byte-sized.
+pub fn encode_32(input: &[u8; KEY_LEN], out: &mut [u8; MAX_ENCODED_32]) -> u8 {
+    backend::encode_32(input, out) as u8
 }
 
 /// Encode a signature, returning how many bytes of the output were written
-pub fn encode_64(input: &[u8; SIGNATURE_LEN], out: &mut [u8; MAX_ENCODED_64]) -> usize {
-    backend::encode_64(input, out)
+///
+/// The count is a `u8` because `MAX_ENCODED_64` is 88, so it always fits.
+pub fn encode_64(input: &[u8; SIGNATURE_LEN], out: &mut [u8; MAX_ENCODED_64]) -> u8 {
+    backend::encode_64(input, out) as u8
 }
 
 /// Decode a public key, rejecting anything that is not exactly 32 bytes wide

@@ -70,7 +70,7 @@ const PAIR_BASE: u32 = 58 * 58;
 /// Every value below [`PAIR_BASE`] as the two characters it spells
 ///
 /// Halves the work of splitting a limb: two divisions instead of four, and
-/// three lookups instead of five. 
+/// three lookups instead of five.
 #[cfg(not(target_os = "solana"))]
 const PAIRS: [u16; 4096] = build_pairs();
 

@@ -15,13 +15,13 @@ fn noise(seed: u64, into: &mut [u8]) {
 
 fn encoded_32(input: &[u8; 32]) -> Vec<u8> {
     let mut out = [0u8; MAX_ENCODED_32];
-    let len = tape_base58::encode_32(input, &mut out);
+    let len = tape_base58::encode_32(input, &mut out) as usize;
     out[..len].to_vec()
 }
 
 fn encoded_64(input: &[u8; 64]) -> Vec<u8> {
     let mut out = [0u8; MAX_ENCODED_64];
-    let len = tape_base58::encode_64(input, &mut out);
+    let len = tape_base58::encode_64(input, &mut out) as usize;
     out[..len].to_vec()
 }
 
