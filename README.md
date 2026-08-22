@@ -49,8 +49,9 @@ of dependent divisions.
 Input that is neither a key nor a signature is folded rather than walked. A
 whole 64-byte block enters the value at once, so the value is reduced once per
 limb per block instead of once per limb per word, and the multiply that
-replaces the rest has no serial chain in it. The constants are about 1.3 KiB,
-not a table. Decoding runs the same trade the other way, ten characters a pass
+replaces the rest has no serial chain in it. It folds in place, against a
+window rather than a second buffer. The constants are about 1.3 KiB, not a
+table. Decoding runs the same trade the other way, ten characters a pass
 into 64-bit words.
 
 Below 128 bytes there is no whole block to fold and the value divides down

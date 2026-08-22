@@ -375,26 +375,27 @@ M4 Max, stock flags:
 
 | bytes | encode | bs58 | decode | bs58 |
 |---|---|---|---|---|
-| 128 | 366 ns | 14.3 us | 152 ns | 5.13 us |
-| 512 | 2.61 us | 246 us | 1.51 us | 85.3 us |
-| 1232 | 9.55 us | 1.44 ms | 7.54 us | 501 us |
+| 128 | 344 ns | 14.8 us | 147 ns | 5.12 us |
+| 512 | 1.89 us | 240 us | 1.46 us | 82.3 us |
+| 1232 | 7.31 us | 1.41 ms | 7.56 us | 489 us |
 
-Zen 5, stock flags:
-
-| bytes | encode | bs58 | decode | bs58 |
-|---|---|---|---|---|
-| 128 | 485 ns | 12.4 us | 152 ns | 5.20 us |
-| 512 | 3.44 us | 281 us | 1.54 us | 92.7 us |
-| 1232 | 14.4 us | 1.63 ms | 8.56 us | 534 us |
+x86 has not been measured since the fold moved in place. The numbers before
+that change were 14.4 us encode and 8.56 us decode at a packet on Zen 5.
 
 1232 bytes is one Solana packet. five8 has no any-length API, so bs58 is the
 whole field here, and this is the path a transaction crosses on submission.
 
 The fold replaced a walk that took 45.9 us to encode a packet on Zen 5 and a
-table path that took 8.10. It beats the walk and it does not yet beat the
-tables on x86, where the compiler vectorises it 128 bits wide against the
-tables' hand-written AVX-512. On aarch64 it beats both. Hand-written x86
-kernels for the fold were tried and lost to the compiler.
+table path that took 8.10. It beats the walk everywhere and beats the tables
+on aarch64. Whether it now beats them on x86 is open. Hand-written x86 kernels
+for the fold were tried and lost to what the compiler emits on its own.
+
+The value is folded in place. A column is written over a limb the next
+seventeen still need, so a group of thirty-two carries those in a window
+rather than the whole value carrying a second buffer: 1900 bytes of frame
+against 4344, which is what brings it inside an SBF frame. Settling one column
+at a time instead of a group measured 2.2x worse, because a group is what
+keeps the multiply running ahead of the reduction.
 
 ## On chain
 
