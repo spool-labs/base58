@@ -314,18 +314,13 @@ pub fn decode(encoded: &[u8], out: &mut [u8]) -> Result<usize, DecodeError> {
     let mut words = [0u64; MAX_VALUE_WORDS];
     let used = gather(&encoded[ones..], &mut words)?;
 
-    // The words run least significant first, so they lay out backwards.
-    let value_len = used * 8;
-    let mut buffer = [0u8; MAX_VALUE_WORDS * 8];
-    for (word, chunk) in words[..used]
-        .iter()
-        .rev()
-        .zip(buffer[..value_len].chunks_exact_mut(8))
-    {
-        chunk.copy_from_slice(&word.to_be_bytes());
-    }
-    let skip = leading_zero_bytes(&buffer[..value_len]);
-    let body = value_len - skip;
+    // Only the topmost word can carry leading zero bytes, and `gather` never
+    // leaves it empty, so the whole value's leading run is that word's.
+    let skip = match used {
+        0 => 0,
+        _ => words[used - 1].leading_zeros() as usize / 8,
+    };
+    let body = used * 8 - skip;
     // A run of ones is one byte apiece, so an encoding short enough to accept
     // can still stand for a value this codec would refuse to encode.
     if ones + body > MAX_VARIABLE_LEN {
@@ -337,7 +332,16 @@ pub fn decode(encoded: &[u8], out: &mut [u8]) -> Result<usize, DecodeError> {
     for slot in out.iter_mut().take(ones) {
         *slot = 0;
     }
-    out[ones..ones + body].copy_from_slice(&buffer[skip..value_len]);
+    let mut at = ones;
+    for (index, word) in words[..used].iter().rev().enumerate() {
+        let bytes = word.to_be_bytes();
+        let from = match index {
+            0 => skip,
+            _ => 0,
+        };
+        out[at..at + 8 - from].copy_from_slice(&bytes[from..]);
+        at += 8 - from;
+    }
     check_leading_ones(&out[..ones + body], encoded)?;
     Ok(ones + body)
 }
