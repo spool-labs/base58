@@ -383,13 +383,19 @@ Zen 5, stock flags:
 
 | bytes | encode | decode |
 |---|---|---|
-| 128 | 581 ns | 156 ns |
-| 512 | 3.56 us | 1.51 us |
-| 1232 | 14.6 us | 8.00 us |
+| 128 | 501 ns | 170 ns |
+| 512 | 2.91 us | 1.50 us |
+| 1232 | 11.5 us | 8.00 us |
 
 The in place fold is worth 1.32x on encode at a packet on aarch64 and nothing
 on x86, where it measures level against the two buffer form it replaced. It
 is worth taking anyway for the frame it saves.
+
+Encode reads its columns eight to a register on x86, which is worth a further
+1.27x at a packet. The window is widened to 64-bit lanes once a group rather
+than on each load, and three earlier kernels lost to the compiler for want of
+that. Two sheds in place of the settling were tried on top and measured worse,
+so the settling stays as it is.
 
 Past a packet there is no length limit when the crate is built with `alloc`,
 which is on by default. The cost is quadratic and measured so: four times the

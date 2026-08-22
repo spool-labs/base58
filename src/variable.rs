@@ -163,6 +163,26 @@ const fn block_places() -> [[u32; BLOCK_LIMBS]; 16] {
 /// What a whole block is worth, which is what a fold multiplies by
 pub(crate) const POWER: [u32; BLOCK_LIMBS] = power_of_two(512);
 
+/// The same, highest place first and a lane apiece
+///
+/// A column reads its window forward against this, and a vector multiply
+/// takes the low half of each 64-bit lane, so the places are widened once
+/// here rather than on every load.
+#[cfg(target_arch = "x86_64")]
+pub(crate) const POWER_REV: [u64; BLOCK_LIMBS] = reversed(POWER);
+
+/// Turn the places around and widen them
+#[cfg(target_arch = "x86_64")]
+const fn reversed(limbs: [u32; BLOCK_LIMBS]) -> [u64; BLOCK_LIMBS] {
+    let mut lanes = [0u64; BLOCK_LIMBS];
+    let mut at = 0;
+    while at < BLOCK_LIMBS {
+        lanes[at] = limbs[BLOCK_LIMBS - 1 - at] as u64;
+        at += 1;
+    }
+    lanes
+}
+
 /// What each word of a block is worth
 const PLACE: [[u32; BLOCK_LIMBS]; 16] = block_places();
 
@@ -207,6 +227,7 @@ fn fold_and_spell(src: &[u8], value: &mut [u32], out: &mut [u8]) -> usize {
         let digits = block_digits(block);
         count = fold_in_place(value, count, &digits);
     }
+
     write_limbs(&value[..count], out)
 }
 

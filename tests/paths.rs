@@ -449,3 +449,27 @@ fn shed_words_matches() {
         }
     }
 }
+
+// the any length codec spells the same characters on every path
+#[test]
+fn variable_paths() {
+    let _guard = pinned();
+    for path in paths() {
+        force(path);
+        for len in [1usize, 63, 64, 65, 128, 129, 350, 512, 1000, 1231, 1232] {
+            let mut input = vec![0u8; len];
+            noise(len as u64 * 3 + 1, &mut input);
+            input[0] = 0;
+            let expected = bs58::encode(&input).into_vec();
+
+            let mut out = vec![0u8; tape_base58::encoded_len(len)];
+            let written = tape_base58::encode(&input, &mut out).expect("encode");
+            assert_eq!(&out[..written], &expected[..], "path {path}, length {len}");
+
+            let mut back = vec![0u8; tape_base58::decoded_len(written)];
+            let read = tape_base58::decode(&out[..written], &mut back).expect("decode");
+            assert_eq!(&back[..read], &input[..], "path {path}, length {len}");
+        }
+    }
+    force(UNKNOWN);
+}
