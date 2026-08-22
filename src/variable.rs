@@ -24,7 +24,7 @@ const MAX_WORDS: usize = MAX_VARIABLE_LEN.div_ceil(4);
 // without them says so here rather than by converting something wrongly.
 
 /// Longest encoding an input of this many bytes can produce
-pub fn encoded_len(input_len: usize) -> usize {
+pub const fn encoded_len(input_len: usize) -> usize {
     input_len * 138 / 100 + 2
 }
 
@@ -32,12 +32,17 @@ pub fn encoded_len(input_len: usize) -> usize {
 ///
 /// A leading one stands for a zero byte apiece, so an encoding that is all
 /// ones is as many bytes as it is characters. Everything else is shorter.
-pub fn decoded_len(encoded_len: usize) -> usize {
-    encoded_len.max(encoded_len * 733 / 1000 + 2)
+pub const fn decoded_len(encoded_len: usize) -> usize {
+    let scaled = encoded_len * 733 / 1000 + 2;
+    match scaled > encoded_len {
+        true => scaled,
+        false => encoded_len,
+    }
 }
 
 /// Encode bytes of any length up to the codec's limit
 pub fn encode(input: &[u8], out: &mut [u8]) -> Result<usize, EncodeError> {
+    #[cfg(not(feature = "alloc"))]
     if input.len() > MAX_VARIABLE_LEN {
         return Err(EncodeError::InputTooLong);
     }
@@ -100,9 +105,13 @@ pub(crate) const BLOCK_LIMBS: usize = 18;
 /// Limbs a block's own value occupies, with a slot of headroom
 pub(crate) const BLOCK_DIGITS: usize = 19;
 
-/// Limbs the widest value and its folding scratch need
-const FOLD_LIMBS: usize =
-    (MAX_VARIABLE_LEN * 138 / 100 + 2).div_ceil(DIGITS_PER_LIMB) + BLOCK_DIGITS + 2;
+/// Limbs the value and its window need for an input this long
+const fn fold_limbs(input_len: usize) -> usize {
+    (input_len * 138 / 100 + 2).div_ceil(DIGITS_PER_LIMB) + BLOCK_DIGITS + 2
+}
+
+/// Limbs the widest input the stack path takes needs
+const FOLD_LIMBS: usize = fold_limbs(MAX_VARIABLE_LEN);
 
 /// Multiply a little-endian bignum by two, in limb base
 const fn doubled(mut limbs: [u32; BLOCK_LIMBS]) -> [u32; BLOCK_LIMBS] {
@@ -162,8 +171,22 @@ const PLACE: [[u32; BLOCK_LIMBS]; 16] = block_places();
 /// Each step is value = value * 2^512 + block, so the value is reduced once
 /// per limb per 64 bytes rather than once per limb per word.
 fn spell_by_folding(src: &[u8], out: &mut [u8]) -> usize {
+    let needed = fold_limbs(src.len());
+    if needed > FOLD_LIMBS {
+        #[cfg(feature = "alloc")]
+        {
+            let mut value = alloc::vec![0u32; needed];
+            return fold_and_spell(src, &mut value, out);
+        }
+        #[cfg(not(feature = "alloc"))]
+        unreachable!("encode turns away anything the stack path cannot hold");
+    }
     let mut value = [0u32; FOLD_LIMBS];
+    fold_and_spell(src, &mut value, out)
+}
 
+/// Fold the input into the limbs it is handed, then spell them
+fn fold_and_spell(src: &[u8], value: &mut [u32], out: &mut [u8]) -> usize {
     // Whatever is not a whole block, taken while the value is still short.
     let (head, blocks) = src.split_at(src.len() % BLOCK);
     let ragged = head.len() % 4;
@@ -173,22 +196,22 @@ fn spell_by_folding(src: &[u8], out: &mut [u8]) -> usize {
         for byte in &head[..ragged] {
             word = (word << 8) | *byte as u64;
         }
-        raise(&mut value, &mut count, 1u64 << (8 * ragged), word);
+        raise(value, &mut count, 1u64 << (8 * ragged), word);
     }
     for chunk in head[ragged..].chunks_exact(4) {
         let word = u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-        raise(&mut value, &mut count, 1u64 << 32, word as u64);
+        raise(value, &mut count, 1u64 << 32, word as u64);
     }
 
     for block in blocks.chunks_exact(BLOCK) {
         let digits = block_digits(block);
-        count = fold_in_place(&mut value, count, &digits);
+        count = fold_in_place(value, count, &digits);
     }
     write_limbs(&value[..count], out)
 }
 
 /// `value = value * scale + word`, for the head of an input
-fn raise(value: &mut [u32; FOLD_LIMBS], count: &mut usize, scale: u64, word: u64) {
+fn raise(value: &mut [u32], count: &mut usize, scale: u64, word: u64) {
     let mut carry = word;
     for limb in value[..*count].iter_mut() {
         let wide = *limb as u64 * scale + carry;
@@ -307,12 +330,33 @@ fn write_limbs(limbs: &[u32], out: &mut [u8]) -> usize {
 
 /// Decode characters of any length up to the codec's limit
 pub fn decode(encoded: &[u8], out: &mut [u8]) -> Result<usize, DecodeError> {
+    #[cfg(not(feature = "alloc"))]
     if encoded.len() > encoded_len(MAX_VARIABLE_LEN) {
         return Err(DecodeError::TooLong);
     }
     let ones = leading_ones(encoded);
+    let needed = value_words(encoded.len());
+    if needed > MAX_VALUE_WORDS {
+        #[cfg(feature = "alloc")]
+        {
+            let mut words = alloc::vec![0u64; needed];
+            return lay_out(encoded, ones, &mut words, out);
+        }
+        #[cfg(not(feature = "alloc"))]
+        unreachable!("decode turns away anything the stack path cannot hold");
+    }
     let mut words = [0u64; MAX_VALUE_WORDS];
-    let used = gather(&encoded[ones..], &mut words)?;
+    lay_out(encoded, ones, &mut words, out)
+}
+
+/// Read the characters into the words handed over, then lay them out as bytes
+fn lay_out(
+    encoded: &[u8],
+    ones: usize,
+    words: &mut [u64],
+    out: &mut [u8],
+) -> Result<usize, DecodeError> {
+    let used = gather(&encoded[ones..], words)?;
 
     // Only the topmost word can carry leading zero bytes, and `gather` never
     // leaves it empty, so the whole value's leading run is that word's.
@@ -323,6 +367,7 @@ pub fn decode(encoded: &[u8], out: &mut [u8]) -> Result<usize, DecodeError> {
     let body = used * 8 - skip;
     // A run of ones is one byte apiece, so an encoding short enough to accept
     // can still stand for a value this codec would refuse to encode.
+    #[cfg(not(feature = "alloc"))]
     if ones + body > MAX_VARIABLE_LEN {
         return Err(DecodeError::TooLong);
     }
@@ -354,14 +399,19 @@ const CHARS_PER_PASS: usize = 10;
 /// `58^10`, what a whole pass is worth
 const PASS_SCALE: u64 = 430_804_206_899_405_824;
 
-/// Words the widest value occupies, least significant first
-const MAX_VALUE_WORDS: usize = MAX_VARIABLE_LEN.div_ceil(8) + 1;
+/// Words an encoding this long can occupy, least significant first
+const fn value_words(encoded_len: usize) -> usize {
+    encoded_len.div_ceil(8) + 1
+}
+
+/// Words the widest encoding the stack path takes occupies
+const MAX_VALUE_WORDS: usize = value_words(encoded_len(MAX_VARIABLE_LEN));
 
 /// Read the characters into words, returning how many they filled
 ///
 /// Each scaling waits on the one before it, so a pass is made as wide as a
 /// u128 product allows.
-fn gather(encoded: &[u8], words: &mut [u64; MAX_VALUE_WORDS]) -> Result<usize, DecodeError> {
+fn gather(encoded: &[u8], words: &mut [u64]) -> Result<usize, DecodeError> {
     let mut used = 0;
     // The short run leads, so every other pass reads the same scale. Either
     // way the characters go front to back, which names a bad one by position.
@@ -429,7 +479,7 @@ fn divide_by_limb_base(words: &mut [u32]) -> u64 {
 
 /// `value = value * scale + add`, over the words the value occupies
 fn multiply_add(
-    words: &mut [u64; MAX_VALUE_WORDS],
+    words: &mut [u64],
     used: usize,
     scale: u64,
     add: u64,
@@ -444,7 +494,7 @@ fn multiply_add(
     // The words grow upward, so an oversized value is caught here.
     let mut grown = used;
     while carry > 0 {
-        if grown == MAX_VALUE_WORDS {
+        if grown == words.len() {
             return Err(DecodeError::TooLong);
         }
         words[grown] = carry as u64;

@@ -15,6 +15,12 @@ exclude = ["BENCHMARKS.md"]
 level = "warn"
 check-cfg = ['cfg(target_os, values("solana"))']
 
+[features]
+default = ["alloc"]
+
+# Heap scratch, which lifts the length limit. Off for programs.
+alloc = []
+
 [dependencies]
 
 [dev-dependencies]

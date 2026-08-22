@@ -9,6 +9,9 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
 mod backend;
 
 #[cfg(target_arch = "x86_64")]
