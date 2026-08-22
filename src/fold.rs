@@ -1,76 +1,95 @@
-//! The fold's multiply
-//!
-//! Every limb's products against the block power land on eighteen columns and
-//! none of them wait on each other, so the compiler vectorises this on its
-//! own. Hand-written x86 kernels were tried and lost to it.
+//! The fold's arithmetic
 
-use crate::variable::{BLOCK_LIMBS, COMBA_LIMBS, POWER};
+use crate::scalar::LIMB_BASE;
+use crate::variable::{BLOCK_DIGITS, BLOCK_LIMBS, POWER};
 
-/// Add every limb's products to the columns they land in, overwriting them
-pub(crate) fn multiply(value: &[u32], count: usize, loose: &mut [u64]) {
-    match count < COMBA_LIMBS {
-        true => spread(value, count, loose),
-        false => columns(value, count, loose),
-    }
-}
-
-/// Spread each limb's products across the columns they land in
-fn spread(value: &[u32], count: usize, loose: &mut [u64]) {
-    for slot in loose.iter_mut() {
-        *slot = 0;
-    }
-    for (at, limb) in value[..count].iter().enumerate() {
-        let limb = *limb as u64;
-        for (slot, place) in loose[at..at + BLOCK_LIMBS].iter_mut().zip(POWER.iter()) {
-            *slot += limb * *place as u64;
-        }
-    }
-}
-
-/// Gather each column's products, one store per column
+/// Columns settled in one pass over the window
 ///
-/// The middle walks fixed-width windows so the inner trip count is constant
-/// and unrolls. Eighteen products of limbs below the base stay inside a u64.
-fn columns(value: &[u32], count: usize, loose: &mut [u64]) {
-    const SPAN: usize = BLOCK_LIMBS - 1;
-    let ramp = SPAN.min(loose.len());
-    let middle = count.max(ramp);
+/// Their sums do not wait on each other, so the group is what keeps the
+/// multiply running ahead of the reduction that follows it.
+const GROUP: usize = 32;
 
-    for (at, slot) in loose[..ramp].iter_mut().enumerate() {
-        let highest = at.min(count - 1);
-        let mut sum = 0u64;
-        for (limb, place) in value[..=highest]
-            .iter()
-            .zip(POWER[at - highest..=at].iter().rev())
-        {
-            sum += *limb as u64 * *place as u64;
-        }
-        *slot = sum;
+/// Limbs a column reaches back over
+const SPAN: usize = BLOCK_LIMBS - 1;
+
+/// The limb at this place, or nought once the value runs out
+#[inline(always)]
+fn limb_at(value: &[u32], count: usize, at: usize) -> u32 {
+    match at < count {
+        true => value[at],
+        false => 0,
     }
-    for (slot, window) in loose[ramp..middle]
-        .iter_mut()
-        .zip(value[ramp - SPAN..count].windows(BLOCK_LIMBS))
-    {
-        let mut sum = 0u64;
-        for (limb, place) in window.iter().zip(POWER.iter().rev()) {
-            sum += *limb as u64 * *place as u64;
-        }
-        *slot = sum;
+}
+
+/// Fold a block into the value in place, returning the limbs left
+///
+/// Each column is eighteen products against the block power. Columns run
+/// upward so the carry can, which means a column is written over a limb the
+/// next seventeen still need, so a group carries those in a window rather
+/// than the whole value carrying a second buffer. Eighteen products of limbs
+/// below the base come to 2^62.8, and the carry and the block's own digits
+/// fit above that.
+pub(crate) fn fold_in_place(
+    value: &mut [u32],
+    count: usize,
+    digits: &[u32; BLOCK_DIGITS],
+) -> usize {
+    let reach = count + BLOCK_LIMBS + 1;
+    let mut held = [0u32; GROUP + SPAN];
+    let mut sums = [0u64; GROUP];
+    let mut carry = 0u64;
+    let mut top = 0;
+
+    // The window opens on nothing, which is what the short columns at the
+    // bottom want, and takes zeros again once the limbs run out at the top.
+    for (at, slot) in held[SPAN..].iter_mut().enumerate() {
+        *slot = limb_at(value, count, at);
     }
-    for (at, slot) in loose.iter_mut().enumerate().skip(middle) {
-        // Past the top limb once the ramp clears it.
-        let lowest = at - SPAN;
-        if lowest >= count {
-            *slot = 0;
-            continue;
+
+    let mut base = 0;
+    while base < reach {
+        // Fixed-width windows, so the inner trip count is constant and the
+        // places are read in order. A computed index carries a bounds check
+        // apiece and does not vectorise.
+        for (sum, window) in sums.iter_mut().zip(held.windows(BLOCK_LIMBS)) {
+            let mut total = 0u64;
+            for (limb, weight) in window.iter().zip(POWER.iter().rev()) {
+                total += *limb as u64 * *weight as u64;
+            }
+            *sum = total;
         }
-        let mut sum = 0u64;
-        for (limb, place) in value[lowest..count]
-            .iter()
-            .zip(POWER[at + 1 - count..].iter().rev())
-        {
-            sum += *limb as u64 * *place as u64;
+
+        // Slide before the settling below overwrites what it reads.
+        held.copy_within(GROUP.., 0);
+        for (at, slot) in held[SPAN..].iter_mut().enumerate() {
+            *slot = limb_at(value, count, base + GROUP + at);
         }
-        *slot = sum;
+
+        for (at, sum) in sums.iter().enumerate() {
+            let place = base + at;
+            if place >= reach {
+                break;
+            }
+            let mut total = *sum + carry;
+            if place < BLOCK_DIGITS {
+                total += digits[place] as u64;
+            }
+            let limb = (total % LIMB_BASE) as u32;
+            carry = total / LIMB_BASE;
+            value[place] = limb;
+            if limb != 0 {
+                top = place + 1;
+            }
+        }
+        base += GROUP;
     }
+
+    let mut at = reach;
+    while carry > 0 {
+        value[at] = (carry % LIMB_BASE) as u32;
+        carry /= LIMB_BASE;
+        at += 1;
+        top = at;
+    }
+    top
 }

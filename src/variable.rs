@@ -6,7 +6,7 @@
 //! one digit across bytes.
 
 use crate::error::{DecodeError, EncodeError};
-use crate::fold::multiply;
+use crate::fold::fold_in_place;
 use crate::scalar::{
     check_leading_ones, digit_of, leading_zero_bytes, ALPHABET, DIGITS_PER_LIMB, LIMB_BASE,
 };
@@ -98,10 +98,7 @@ const BLOCK: usize = 64;
 pub(crate) const BLOCK_LIMBS: usize = 18;
 
 /// Limbs a block's own value occupies, with a slot of headroom
-const BLOCK_DIGITS: usize = 19;
-
-/// Limbs above which gathering a column beats spreading a limb
-pub(crate) const COMBA_LIMBS: usize = 96;
+pub(crate) const BLOCK_DIGITS: usize = 19;
 
 /// Limbs the widest value and its folding scratch need
 const FOLD_LIMBS: usize =
@@ -166,7 +163,6 @@ const PLACE: [[u32; BLOCK_LIMBS]; 16] = block_places();
 /// per limb per 64 bytes rather than once per limb per word.
 fn spell_by_folding(src: &[u8], out: &mut [u8]) -> usize {
     let mut value = [0u32; FOLD_LIMBS];
-    let mut loose = [0u64; FOLD_LIMBS];
 
     // Whatever is not a whole block, taken while the value is still short.
     let (head, blocks) = src.split_at(src.len() % BLOCK);
@@ -186,19 +182,9 @@ fn spell_by_folding(src: &[u8], out: &mut [u8]) -> usize {
 
     for block in blocks.chunks_exact(BLOCK) {
         let digits = block_digits(block);
-        let reach = count + BLOCK_LIMBS + 1;
-        multiply(&value, count, &mut loose[..reach]);
-        for (slot, digit) in loose[..BLOCK_DIGITS].iter_mut().zip(digits.iter()) {
-            *slot += *digit as u64;
-        }
-        count = settle_folded(&loose[..reach], &mut value);
+        count = fold_in_place(&mut value, count, &digits);
     }
-
-    // The scratch is spent, so the limbs widen back into it.
-    for (slot, limb) in loose[..count].iter_mut().zip(value[..count].iter()) {
-        *slot = *limb as u64;
-    }
-    write_limbs(&loose[..count], out)
+    write_limbs(&value[..count], out)
 }
 
 /// `value = value * scale + word`, for the head of an input
@@ -252,32 +238,6 @@ fn block_digits(block: &[u8]) -> [u32; BLOCK_DIGITS] {
     digits
 }
 
-/// Bring loose columns back below the limb base, returning the limbs left
-///
-/// Walks forward with the carry in a register. Downward in place compiles to
-/// a reload of what was just stored.
-fn settle_folded(loose: &[u64], value: &mut [u32; FOLD_LIMBS]) -> usize {
-    let mut carry = 0u64;
-    let mut top = 0;
-    for (at, slot) in loose.iter().enumerate() {
-        let wide = *slot + carry;
-        let limb = (wide % LIMB_BASE) as u32;
-        carry = wide / LIMB_BASE;
-        value[at] = limb;
-        if limb != 0 {
-            top = at + 1;
-        }
-    }
-    let mut at = loose.len();
-    while carry > 0 {
-        value[at] = (carry % LIMB_BASE) as u32;
-        carry /= LIMB_BASE;
-        at += 1;
-        top = at;
-    }
-    top
-}
-
 /// Spell the value by dividing it down by the limb base a limb at a time
 ///
 /// Each division waits on the one before it, which is what the table path
@@ -317,14 +277,14 @@ fn spell_by_dividing(words: &mut [u32; MAX_WORDS], used: usize, out: &mut [u8]) 
 
 /// Spell settled limbs as characters, least significant first, then turn
 /// them around
-fn write_limbs(limbs: &[u64], out: &mut [u8]) -> usize {
+fn write_limbs(limbs: &[u32], out: &mut [u8]) -> usize {
     let mut top = limbs.len();
     while top > 0 && limbs[top - 1] == 0 {
         top -= 1;
     }
     let mut written = 0;
     for (at, limb) in limbs[..top].iter().enumerate() {
-        let mut value = *limb;
+        let mut value = *limb as u64;
         // The highest limb spells only the digits the value reaches into.
         let mut take = DIGITS_PER_LIMB;
         if at + 1 == top {
