@@ -55,7 +55,9 @@ table. Decoding runs the same trade the other way, ten characters a pass
 into 64-bit words.
 
 Below 128 bytes there is no whole block to fold and the value divides down
-instead, which is cheaper while it is short.
+instead, which is cheaper while it is short. Above a packet the scratch comes
+from the heap, so there is no length limit unless the crate is built without
+`alloc`, which is what a program wants.
 
 ## Benchmarks
 

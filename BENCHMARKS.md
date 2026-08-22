@@ -379,8 +379,30 @@ M4 Max, stock flags:
 | 512 | 1.89 us | 240 us | 1.46 us | 82.3 us |
 | 1232 | 7.31 us | 1.41 ms | 7.56 us | 489 us |
 
-x86 has not been measured since the fold moved in place. The numbers before
-that change were 14.4 us encode and 8.56 us decode at a packet on Zen 5.
+Zen 5, stock flags:
+
+| bytes | encode | decode |
+|---|---|---|
+| 128 | 581 ns | 156 ns |
+| 512 | 3.56 us | 1.51 us |
+| 1232 | 14.6 us | 8.00 us |
+
+The in place fold is worth 1.32x on encode at a packet on aarch64 and nothing
+on x86, where it measures level against the two buffer form it replaced. It
+is worth taking anyway for the frame it saves.
+
+Past a packet there is no length limit when the crate is built with `alloc`,
+which is on by default. The cost is quadratic and measured so: four times the
+input is about fifteen times the work.
+
+| bytes | encode | decode |
+|---|---|---|
+| 4096 | 127 us | 84.0 us |
+| 16384 | 1.86 ms | 1.28 ms |
+| 65536 | 29.1 ms | 20.3 ms |
+
+Programs build with `default-features = false` and keep the stack path, which
+tops out at `MAX_VARIABLE_LEN`.
 
 1232 bytes is one Solana packet. five8 has no any-length API, so bs58 is the
 whole field here, and this is the path a transaction crosses on submission.
