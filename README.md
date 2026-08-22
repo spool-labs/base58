@@ -1,5 +1,9 @@
 # tape-base58
 
+[![Crates.io](https://img.shields.io/crates/v/tape-base58.svg)](https://crates.io/crates/tape-base58)
+[![Documentation](https://docs.rs/tape-base58/badge.svg)](https://docs.rs/tape-base58)
+[![License](https://img.shields.io/crates/l/tape-base58.svg)](LICENSE)
+
 Fast base58 for Solana-shaped data. Fixed-size paths for public keys and signatures,
 a limb-based codec for everything else, and the widest instruction set the
 running machine supports chosen at first use.
