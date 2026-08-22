@@ -29,8 +29,11 @@ pub fn encoded_len(input_len: usize) -> usize {
 }
 
 /// Most bytes an encoding of this many characters can produce
+///
+/// A leading one stands for a zero byte apiece, so an encoding that is all
+/// ones is as many bytes as it is characters. Everything else is shorter.
 pub fn decoded_len(encoded_len: usize) -> usize {
-    encoded_len * 733 / 1000 + 2
+    encoded_len.max(encoded_len * 733 / 1000 + 2)
 }
 
 /// Encode bytes of any length up to the codec's limit

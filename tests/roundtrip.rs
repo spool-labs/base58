@@ -104,6 +104,20 @@ fn variable_limit() {
     );
 }
 
+// an all-zero input decodes into a buffer sized by decoded_len
+#[test]
+fn zeros_fit() {
+    for len in 0..=MAX_VARIABLE_LEN {
+        let input = vec![0u8; len];
+        let mut text = vec![0u8; tape_base58::encoded_len(len)];
+        let written = tape_base58::encode(&input, &mut text).expect("encode");
+
+        let mut back = vec![0u8; tape_base58::decoded_len(written)];
+        let read = tape_base58::decode(&text[..written], &mut back).expect("decode");
+        assert_eq!(&back[..read], &input[..], "length {len}");
+    }
+}
+
 // variable length input matches the reference at every length it accepts
 #[test]
 fn variable_lengths() {
