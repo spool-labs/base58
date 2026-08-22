@@ -366,6 +366,11 @@ pub fn decode(encoded: &[u8], out: &mut [u8]) -> Result<usize, DecodeError> {
     }
     let skip = leading_zero_bytes(&buffer[..value_len]);
     let body = value_len - skip;
+    // A run of ones is one byte apiece, so an encoding short enough to accept
+    // can still stand for a value this codec would refuse to encode.
+    if ones + body > MAX_VARIABLE_LEN {
+        return Err(DecodeError::TooLong);
+    }
     if out.len() < ones + body {
         return Err(DecodeError::OutputTooLong);
     }

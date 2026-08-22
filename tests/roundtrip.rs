@@ -104,6 +104,17 @@ fn variable_limit() {
     );
 }
 
+// an encoding standing for more bytes than the codec takes is refused
+#[test]
+fn long_zeros() {
+    let text = vec![b'1'; MAX_VARIABLE_LEN + 1];
+    let mut out = vec![0u8; tape_base58::decoded_len(text.len())];
+    assert!(matches!(
+        tape_base58::decode(&text, &mut out),
+        Err(DecodeError::TooLong)
+    ));
+}
+
 // an all-zero input decodes into a buffer sized by decoded_len
 #[test]
 fn zeros_fit() {
