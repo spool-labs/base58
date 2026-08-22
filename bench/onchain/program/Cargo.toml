@@ -1,0 +1,28 @@
+[package]
+name = "cu-bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = ["tape", "five8", "bs58"]
+tape = ["dep:tape-base58"]
+five8 = ["dep:five8"]
+bs58 = ["dep:bs58"]
+
+[dependencies]
+tape-base58 = { path = "../../..", optional = true }
+five8 = { version = "1", optional = true }
+bs58 = { version = "0.5", default-features = false, optional = true }
+
+[profile.release]
+overflow-checks = false
+lto = "fat"
+codegen-units = 1
+
+# Standalone rather than a workspace member, so the published crate carries
+# neither this harness nor the dependencies it needs.
+[workspace]

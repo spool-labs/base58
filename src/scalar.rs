@@ -64,18 +64,21 @@ const fn build_chars() -> [u8; 64] {
 }
 
 /// Values a pair of digits counts through
+#[cfg(not(target_os = "solana"))]
 const PAIR_BASE: u32 = 58 * 58;
 
 /// Every value below [`PAIR_BASE`] as the two characters it spells
 ///
 /// Halves the work of splitting a limb: two divisions instead of four, and
-/// three lookups instead of five. Padded to a power of two for the same reason
-/// [`CHARS`] is, and costing eight kilobytes to be so.
+/// three lookups instead of five. 
+#[cfg(not(target_os = "solana"))]
 const PAIRS: [u16; 4096] = build_pairs();
 
 /// Index into [`PAIRS`] that cannot address a pair
+#[cfg(not(target_os = "solana"))]
 const PAIRS_MASK: u32 = 4095;
 
+#[cfg(not(target_os = "solana"))]
 const fn build_pairs() -> [u16; 4096] {
     let mut table = [0u16; 4096];
     let mut at = 0;
@@ -371,13 +374,30 @@ pub(crate) fn to_chars<const LIMBS: usize, const PADDED: usize>(
         let settled = limb + carry;
         carry = settled / LIMB_BASE;
         let value = (settled - carry * LIMB_BASE) as u32;
-        let high = value / PAIR_BASE;
-        let low = value - high * PAIR_BASE;
-        let first = high / PAIR_BASE;
-        let middle = high - first * PAIR_BASE;
-        slot[0] = CHARS[(first & CHARS_MASK) as usize];
-        slot[1..3].copy_from_slice(&PAIRS[(middle & PAIRS_MASK) as usize].to_le_bytes());
-        slot[3..5].copy_from_slice(&PAIRS[(low & PAIRS_MASK) as usize].to_le_bytes());
+        #[cfg(not(target_os = "solana"))]
+        {
+            let high = value / PAIR_BASE;
+            let low = value - high * PAIR_BASE;
+            let first = high / PAIR_BASE;
+            let middle = high - first * PAIR_BASE;
+            slot[0] = CHARS[(first & CHARS_MASK) as usize];
+            slot[1..3].copy_from_slice(&PAIRS[(middle & PAIRS_MASK) as usize].to_le_bytes());
+            slot[3..5].copy_from_slice(&PAIRS[(low & PAIRS_MASK) as usize].to_le_bytes());
+        }
+        // Digit at a time through [`CHARS`]: two more divides per limb, no
+        // eight-kilobyte table in the binary
+        #[cfg(target_os = "solana")]
+        {
+            let first = value / 58;
+            let second = first / 58;
+            let third = second / 58;
+            let fourth = third / 58;
+            slot[0] = CHARS[(fourth & CHARS_MASK) as usize];
+            slot[1] = CHARS[((third - fourth * 58) & CHARS_MASK) as usize];
+            slot[2] = CHARS[((second - third * 58) & CHARS_MASK) as usize];
+            slot[3] = CHARS[((first - second * 58) & CHARS_MASK) as usize];
+            slot[4] = CHARS[((value - first * 58) & CHARS_MASK) as usize];
+        }
     }
     chars
 }

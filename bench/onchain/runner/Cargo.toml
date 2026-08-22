@@ -1,0 +1,13 @@
+[package]
+name = "cu-runner"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+mollusk-svm = "0.15"
+solana-instruction = "*"
+solana-pubkey = "*"
+bs58 = "0.5"
+
+[workspace]
