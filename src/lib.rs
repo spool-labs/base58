@@ -22,18 +22,15 @@ mod dispatch;
 
 mod batch;
 mod error;
+mod fold;
 #[cfg(target_arch = "aarch64")]
 mod neon;
 #[cfg(target_arch = "x86_64")]
 mod wide;
 
-#[cfg(feature = "variable")]
-mod place_values;
-
 mod scalar;
 mod tables;
 mod variable;
-mod variable_simd;
 
 pub use batch::{decode_32_batch, decode_64_batch, encode_32_batch, encode_64_batch};
 
@@ -65,9 +62,6 @@ pub mod testing {
         read_64 as wide_read_64, words_from_limbs_64 as wide_words_from_limbs_64,
     };
     pub use crate::tables::{DECODE_32, DECODE_64, ENCODE_32, ENCODE_64};
-
-    #[cfg(feature = "variable")]
-    pub use crate::place_values::{LIMB_OFFSETS, LIMB_VALUES, PLACE_OFFSETS, PLACE_VALUES};
 
     /// Pin the codec to one path, so a test can reach the ones this machine
     /// would not have chosen for itself

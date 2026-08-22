@@ -107,7 +107,7 @@ fn variable_limit() {
 // variable length input matches the reference at every length it accepts
 #[test]
 fn variable_lengths() {
-    for len in 0..=300usize {
+    for len in 0..=MAX_VARIABLE_LEN {
         let mut input = vec![0u8; len];
         noise(len as u64 + 11, &mut input);
         if len > 3 {

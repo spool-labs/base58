@@ -15,10 +15,6 @@ exclude = ["BENCHMARKS.md"]
 level = "warn"
 check-cfg = ['cfg(target_os, values("solana"))']
 
-[features]
-default = []
-variable = []
-
 [dependencies]
 
 [dev-dependencies]

@@ -156,37 +156,3 @@ fn decode_64() {
         .collect();
     check_decode(&rows, 16, 18);
 }
-
-// every place value rebuilds the power of two it stands for
-#[cfg(feature = "variable")]
-#[test]
-fn place_values() {
-    use tape_base58::testing::{PLACE_OFFSETS, PLACE_VALUES};
-
-    for power in 0..PLACE_OFFSETS.len() - 1 {
-        let from = PLACE_OFFSETS[power] as usize;
-        let until = PLACE_OFFSETS[power + 1] as usize;
-        let mut total = Big::zero();
-        for (limb, factor) in PLACE_VALUES[from..until].iter().enumerate() {
-            total = total.add(&Big::limb_base_to(limb).multiply(*factor));
-        }
-        assert_eq!(total, Big::two_to(32 * power), "place value {power}");
-    }
-}
-
-// every limb place rebuilds the power of the limb base it stands for
-#[cfg(feature = "variable")]
-#[test]
-fn limb_values() {
-    use tape_base58::testing::{LIMB_OFFSETS, LIMB_VALUES};
-
-    for power in 0..LIMB_OFFSETS.len() - 1 {
-        let from = LIMB_OFFSETS[power] as usize;
-        let until = LIMB_OFFSETS[power + 1] as usize;
-        let mut total = Big::zero();
-        for (word, factor) in LIMB_VALUES[from..until].iter().enumerate() {
-            total = total.add(&Big::two_to(32 * word).multiply(*factor));
-        }
-        assert_eq!(total, Big::limb_base_to(power), "limb place {power}");
-    }
-}
