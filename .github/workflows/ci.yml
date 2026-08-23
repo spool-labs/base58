@@ -70,10 +70,16 @@ jobs:
   fuzz:
     name: fuzz
     runs-on: ubuntu-latest
+    # Nightly carries lints the pinned toolchains do not, and a fuzz run is
+    # not the place to find out about them.
+    env:
+      RUSTFLAGS: ""
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
-      - uses: taiki-e/install-action@cargo-fuzz
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
       - uses: Swatinem/rust-cache@v2
       # A smoke run, not a campaign. Long runs belong on a box, not on a pull
       # request.

@@ -218,12 +218,12 @@ fn fold_and_spell(src: &[u8], value: &mut [u32], out: &mut [u8]) -> usize {
         }
         raise(value, &mut count, 1u64 << (8 * ragged), word);
     }
-    for chunk in head[ragged..].chunks_exact(4) {
-        let word = u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+    for chunk in head[ragged..].as_chunks::<4>().0 {
+        let word = u32::from_be_bytes(*chunk);
         raise(value, &mut count, 1u64 << 32, word as u64);
     }
 
-    for block in blocks.chunks_exact(BLOCK) {
+    for block in blocks.as_chunks::<BLOCK>().0 {
         let digits = block_digits(block);
         count = fold_in_place(value, count, &digits);
     }
@@ -251,8 +251,8 @@ fn raise(value: &mut [u32], count: &mut usize, scale: u64, word: u64) {
 /// The halves are reduced apart so a column stays inside a u64.
 fn block_digits(block: &[u8]) -> [u32; BLOCK_DIGITS] {
     let mut words = [0u32; 16];
-    for (slot, chunk) in words.iter_mut().zip(block.chunks_exact(4)) {
-        *slot = u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+    for (slot, chunk) in words.iter_mut().zip(block.as_chunks::<4>().0) {
+        *slot = u32::from_be_bytes(*chunk);
     }
 
     let mut digits = [0u32; BLOCK_DIGITS];
@@ -446,7 +446,7 @@ fn gather(encoded: &[u8], words: &mut [u64]) -> Result<usize, DecodeError> {
         }
         used = multiply_add(words, used, scale, value)?;
     }
-    for run in encoded[ragged..].chunks_exact(CHARS_PER_PASS) {
+    for run in encoded[ragged..].as_chunks::<CHARS_PER_PASS>().0 {
         let mut value = 0u64;
         for byte in run {
             value = value * 58 + digit_of(*byte)? as u64;
