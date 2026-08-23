@@ -210,34 +210,34 @@ fn rejects_wrong_width() {
         force(path);
         let mut out = [0u8; 32];
         assert_eq!(
-            decode_32(&vec![b'z'; MAX_ENCODED_32 + 1], &mut out),
+            decode_32(&[b'z'; MAX_ENCODED_32 + 1], &mut out),
             Err(DecodeError::TooLong),
             "path {path}"
         );
         assert_eq!(
-            decode_32(&vec![b'1'; 33], &mut out),
+            decode_32(&[b'1'; 33], &mut out),
             Err(DecodeError::OutputTooLong),
             "path {path}"
         );
         assert_eq!(
-            decode_32(&vec![b'z'; MAX_ENCODED_32], &mut out),
+            decode_32(&[b'z'; MAX_ENCODED_32], &mut out),
             Err(DecodeError::ValueTooLarge),
             "path {path}"
         );
 
         let mut wide = [0u8; 64];
         assert_eq!(
-            decode_64(&vec![b'z'; MAX_ENCODED_64 + 1], &mut wide),
+            decode_64(&[b'z'; MAX_ENCODED_64 + 1], &mut wide),
             Err(DecodeError::TooLong),
             "path {path}"
         );
         assert_eq!(
-            decode_64(&vec![b'1'; 65], &mut wide),
+            decode_64(&[b'1'; 65], &mut wide),
             Err(DecodeError::OutputTooLong),
             "path {path}"
         );
         assert_eq!(
-            decode_64(&vec![b'z'; MAX_ENCODED_64], &mut wide),
+            decode_64(&[b'z'; MAX_ENCODED_64], &mut wide),
             Err(DecodeError::ValueTooLarge),
             "path {path}"
         );
