@@ -9,7 +9,33 @@
 use libfuzzer_sys::fuzz_target;
 use tape_base58::{decoded_len, encoded_len, MAX_VARIABLE_LEN};
 
+/// Pin the codec to one path, so each kernel gets a run of its own
+///
+/// Dispatch only ever picks the widest a machine has, so without this the
+/// narrower kernels never see an input.
+fn pin() {
+    #[cfg(target_arch = "x86_64")]
+    {
+        use std::sync::Once;
+        static ONCE: Once = Once::new();
+        ONCE.call_once(|| {
+            use tape_base58::testing::{available, force, AVX2, PORTABLE, WIDE};
+            let widest = available();
+            let asked = std::env::var("TAPE_PATH").unwrap_or_default();
+            let marker = match asked.as_str() {
+                "portable" => PORTABLE,
+                "avx2" if widest == AVX2 || widest == WIDE => AVX2,
+                "avx512" if widest == WIDE => WIDE,
+                "" => return,
+                other => panic!("this machine cannot run {other}"),
+            };
+            force(marker);
+        });
+    }
+}
+
 fuzz_target!(|data: &[u8]| {
+    pin();
     if data.len() > encoded_len(MAX_VARIABLE_LEN) {
         return;
     }
