@@ -27,6 +27,13 @@ pub fn encode_32_batch(
     if out.len() < inputs.len() * crate::MAX_ENCODED_32 || lengths.len() < inputs.len() {
         return Err(EncodeError::OutputTooSmall);
     }
+    if backend::is_encode_32_direct() {
+        let (slots, _) = out.as_chunks_mut::<{ crate::MAX_ENCODED_32 }>();
+        for ((input, slot), length) in inputs.iter().zip(slots).zip(lengths.iter_mut()) {
+            *length = backend::encode_32(input, slot);
+        }
+        return Ok(());
+    }
     for (group, chunk) in inputs.chunks(LANES).enumerate() {
         let mut limbs = [[0u64; LIMBS_32]; LANES];
         let mut words = [[0u32; WORDS_32]; LANES];
@@ -100,6 +107,12 @@ pub fn decode_32_batch(encoded: &[&[u8]], out: &mut [[u8; 32]]) -> Result<(), Ba
     if out.len() < encoded.len() {
         return Err(BatchError::OutputTooSmall);
     }
+    if backend::is_decode_32_direct() {
+        for (at, (input, slot)) in encoded.iter().zip(out.iter_mut()).enumerate() {
+            backend::decode_32(input, slot).map_err(blame(at))?;
+        }
+        return Ok(());
+    }
     for (group, chunk) in encoded.chunks(LANES).enumerate() {
         let mut limbs = [[0u32; LIMBS_32]; LANES];
         for (lane, input) in chunk.iter().enumerate() {
@@ -121,6 +134,12 @@ pub fn decode_32_batch(encoded: &[&[u8]], out: &mut [[u8; 32]]) -> Result<(), Ba
 pub fn decode_64_batch(encoded: &[&[u8]], out: &mut [[u8; 64]]) -> Result<(), BatchError> {
     if out.len() < encoded.len() {
         return Err(BatchError::OutputTooSmall);
+    }
+    if backend::is_decode_64_direct() {
+        for (at, (input, slot)) in encoded.iter().zip(out.iter_mut()).enumerate() {
+            backend::decode_64(input, slot).map_err(blame(at))?;
+        }
+        return Ok(());
     }
     for (group, chunk) in encoded.chunks(LANES).enumerate() {
         let mut limbs = [[0u32; LIMBS_64]; LANES];

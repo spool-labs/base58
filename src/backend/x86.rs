@@ -50,6 +50,21 @@ pub(crate) fn encode_64(input: &[u8; 64], out: &mut [u8; MAX_ENCODED_64]) -> usi
     }
 }
 
+/// Whether a key decodes better alone than interleaved with its neighbours
+pub(crate) fn is_decode_32_direct() -> bool {
+    false
+}
+
+/// Whether a signature decodes better alone than interleaved with its neighbours
+pub(crate) fn is_decode_64_direct() -> bool {
+    false
+}
+
+/// Whether a key encodes better alone than interleaved with its neighbours
+pub(crate) fn is_encode_32_direct() -> bool {
+    false
+}
+
 /// Whether a signature encodes better alone than interleaved with its neighbours
 ///
 /// The vector encoders run the whole conversion behind one `target_feature`

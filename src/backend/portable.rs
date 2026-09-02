@@ -32,6 +32,21 @@ pub(crate) fn encode_64(input: &[u8; 64], out: &mut [u8; MAX_ENCODED_64]) -> usi
     scalar::encode_64(input, out)
 }
 
+/// Whether a key decodes better alone than interleaved with its neighbours
+pub(crate) fn is_decode_32_direct() -> bool {
+    false
+}
+
+/// Whether a signature decodes better alone than interleaved with its neighbours
+pub(crate) fn is_decode_64_direct() -> bool {
+    false
+}
+
+/// Whether a key encodes better alone than interleaved with its neighbours
+pub(crate) fn is_encode_32_direct() -> bool {
+    false
+}
+
 /// Whether a signature encodes better alone than interleaved with its neighbours
 ///
 /// Nothing here converts more than one chain at a time, so a batch keeps the
