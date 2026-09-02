@@ -88,6 +88,12 @@ const fn flip_words() -> [u8; 32] {
     lanes
 }
 
+/// Shortest encoding a key can produce, which is one character per zero byte
+pub(crate) const MIN_ENCODED_32: usize = 32;
+
+/// Shortest encoding a signature can produce
+pub(crate) const MIN_ENCODED_64: usize = 64;
+
 /// The limb base with its five factors of two removed
 ///
 /// `floor(x / 58^5)` is `floor((x >> 5) / LIMB_BASE_ODD)`, and the odd divisor

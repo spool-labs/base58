@@ -397,15 +397,18 @@ than on each load, and three earlier kernels lost to the compiler for want of
 that. Two sheds in place of the settling were tried on top and measured worse,
 so the settling stays as it is.
 
-Past a packet there is no length limit when the crate is built with `alloc`,
-which is on by default. The cost is quadratic and measured so: four times the
-input is about fifteen times the work.
+Past a packet the scratch comes from the heap, as far as `MAX_ACCEPTED_LEN`.
+The cost is quadratic and measured so, which is the reason that ceiling
+exists: four times the input is about fifteen times the work.
 
 | bytes | encode | decode |
 |---|---|---|
 | 4096 | 127 us | 84.0 us |
 | 16384 | 1.86 ms | 1.28 ms |
 | 65536 | 29.1 ms | 20.3 ms |
+
+The two widest rows predate the ceiling and are no longer reachable through
+the public API. They are why it is where it is.
 
 Programs build with `default-features = false` and keep the stack path, which
 tops out at `MAX_VARIABLE_LEN`.

@@ -50,6 +50,15 @@ pub(crate) fn encode_64(input: &[u8; 64], out: &mut [u8; MAX_ENCODED_64]) -> usi
     }
 }
 
+/// Whether a signature encodes better alone than interleaved with its neighbours
+///
+/// The vector encoders run the whole conversion behind one `target_feature`
+/// call, and a batch that interleaved first would re-enter that call per lane
+/// with the limbs staged through memory.
+pub(crate) fn is_encode_64_direct() -> bool {
+    !matches!(dispatch::path(), Path::Portable)
+}
+
 /// Spell a public key's limbs, as [`scalar::sum_32`] leaves them, into characters
 ///
 /// Portable on every path, including AVX2, and that is measured rather than
@@ -62,17 +71,12 @@ pub(crate) fn write_32(limbs: [u64; LIMBS_32], input_zeros: usize, out: &mut [u8
 }
 
 /// Spell a signature's limbs, as [`scalar::sum_64`] leaves them, into characters
+///
+/// Portable for the same reason [`write_32`] is, and reached only from the
+/// portable batch: a vector path encodes its signatures one at a time.
 #[inline]
 pub(crate) fn write_64(limbs: [u64; LIMBS_64], input_zeros: usize, out: &mut [u8]) -> usize {
-    if out.len() < MAX_ENCODED_64 {
-        return scalar::write_64(limbs, input_zeros, out);
-    }
-    // SAFETY: as above.
-    match dispatch::path() {
-        Path::Wide => unsafe { avx512::write_64(limbs, input_zeros, out) },
-        Path::Avx2 => unsafe { avx2::write_64(limbs, input_zeros, out) },
-        Path::Portable => scalar::write_64(limbs, input_zeros, out),
-    }
+    scalar::write_64(limbs, input_zeros, out)
 }
 
 pub(crate) fn decode_32(encoded: &[u8], out: &mut [u8; 32]) -> Result<(), DecodeError> {

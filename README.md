@@ -17,7 +17,7 @@ encode_64(&[u8; 64], &mut [u8; MAX_ENCODED_64]) -> usize
 decode_32(&[u8], &mut [u8; 32]) -> Result<(), DecodeError>
 decode_64(&[u8], &mut [u8; 64]) -> Result<(), DecodeError>
 
-// Any length up to MAX_VARIABLE_LEN, which is one Solana packet.
+// Any length up to MAX_ACCEPTED_LEN, past which a call is refused.
 encode(&[u8], &mut [u8]) -> Result<usize, EncodeError>
 decode(&[u8], &mut [u8]) -> Result<usize, DecodeError>
 encoded_len(usize) -> usize
@@ -60,8 +60,10 @@ into 64-bit words.
 
 Below 128 bytes there is no whole block to fold and the value divides down
 instead, which is cheaper while it is short. Above a packet the scratch comes
-from the heap, so there is no length limit unless the crate is built without
-`alloc`, which is what a program wants.
+from the heap, as far as `MAX_ACCEPTED_LEN`. The conversion is quadratic, so
+that ceiling is what bounds the work one call can buy with a length it chose.
+Built without `alloc`, which is what a program wants, the stack path is the
+ceiling instead and it is one packet.
 
 ## Benchmarks
 

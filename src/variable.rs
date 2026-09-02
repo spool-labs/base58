@@ -17,6 +17,18 @@ use crate::scalar::{
 /// a serialized transaction on its way through `sendTransaction`.
 pub const MAX_VARIABLE_LEN: usize = 1232;
 
+/// Longest input this codec accepts at all
+///
+/// The conversion is quadratic, so the ceiling is what bounds the work one
+/// call can buy with a length it chose. Without an allocator the stack scratch
+/// is the tighter of the two.
+#[cfg(feature = "alloc")]
+pub const MAX_ACCEPTED_LEN: usize = 4096;
+
+/// Longest input this codec accepts at all, which is what the stack holds
+#[cfg(not(feature = "alloc"))]
+pub const MAX_ACCEPTED_LEN: usize = MAX_VARIABLE_LEN;
+
 /// Words the widest input occupies
 const MAX_WORDS: usize = MAX_VARIABLE_LEN.div_ceil(4);
 
@@ -42,8 +54,7 @@ pub const fn decoded_len(encoded_len: usize) -> usize {
 
 /// Encode bytes of any length up to the codec's limit
 pub fn encode(input: &[u8], out: &mut [u8]) -> Result<usize, EncodeError> {
-    #[cfg(not(feature = "alloc"))]
-    if input.len() > MAX_VARIABLE_LEN {
+    if input.len() > MAX_ACCEPTED_LEN {
         return Err(EncodeError::InputTooLong);
     }
     let zeros = leading_zero_bytes(input);
@@ -351,8 +362,7 @@ fn write_limbs(limbs: &[u32], out: &mut [u8]) -> usize {
 
 /// Decode characters of any length up to the codec's limit
 pub fn decode(encoded: &[u8], out: &mut [u8]) -> Result<usize, DecodeError> {
-    #[cfg(not(feature = "alloc"))]
-    if encoded.len() > encoded_len(MAX_VARIABLE_LEN) {
+    if encoded.len() > encoded_len(MAX_ACCEPTED_LEN) {
         return Err(DecodeError::TooLong);
     }
     let ones = leading_ones(encoded);
@@ -388,8 +398,7 @@ fn lay_out(
     let body = used * 8 - skip;
     // A run of ones is one byte apiece, so an encoding short enough to accept
     // can still stand for a value this codec would refuse to encode.
-    #[cfg(not(feature = "alloc"))]
-    if ones + body > MAX_VARIABLE_LEN {
+    if ones + body > MAX_ACCEPTED_LEN {
         return Err(DecodeError::TooLong);
     }
     if out.len() < ones + body {

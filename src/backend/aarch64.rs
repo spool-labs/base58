@@ -29,6 +29,14 @@ pub(crate) fn encode_64(input: &[u8; 64], out: &mut [u8; MAX_ENCODED_64]) -> usi
     )
 }
 
+/// Whether a signature encodes better alone than interleaved with its neighbours
+///
+/// The vector spell here is inlined baseline code with no call boundary to
+/// re-enter, so a batch keeps the interleaved sum in front of it.
+pub(crate) fn is_encode_64_direct() -> bool {
+    false
+}
+
 /// Spell a public key's limbs, as [`scalar::sum_32`] leaves them, into characters
 ///
 /// The tail of the encoding, split out so that a caller holding limbs it

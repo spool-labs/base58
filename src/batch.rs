@@ -3,7 +3,8 @@
 //! The conversion is a chain of multiply-accumulates per input, whichever way
 //! it runs, and one chain leaves most of the multiplier idle. Four inputs share
 //! the table read and the loop, and their chains are independent, so the work
-//! interleaves into the gaps a single input leaves.
+//! interleaves into the gaps a single input leaves. A path whose own signature
+//! encoder already fills the multiplier converts those one at a time instead.
 
 use crate::backend;
 use crate::error::{BatchError, DecodeError, EncodeError};
@@ -55,6 +56,13 @@ pub fn encode_64_batch(
 ) -> Result<(), EncodeError> {
     if out.len() < inputs.len() * crate::MAX_ENCODED_64 || lengths.len() < inputs.len() {
         return Err(EncodeError::OutputTooSmall);
+    }
+    if backend::is_encode_64_direct() {
+        let (slots, _) = out.as_chunks_mut::<{ crate::MAX_ENCODED_64 }>();
+        for ((input, slot), length) in inputs.iter().zip(slots).zip(lengths.iter_mut()) {
+            *length = backend::encode_64(input, slot);
+        }
+        return Ok(());
     }
     for (group, chunk) in inputs.chunks(LANES).enumerate() {
         let mut limbs = [[0u64; LIMBS_64]; LANES];

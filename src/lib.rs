@@ -85,7 +85,7 @@ pub mod testing {
     };
 }
 pub use error::{BatchError, DecodeError, EncodeError};
-pub use variable::{decode, decoded_len, encode, encoded_len, MAX_VARIABLE_LEN};
+pub use variable::{decode, decoded_len, encode, encoded_len, MAX_ACCEPTED_LEN, MAX_VARIABLE_LEN};
 
 /// Bytes in a public key
 pub const KEY_LEN: usize = 32;

@@ -36,8 +36,10 @@ use crate::scalar::{
 use crate::tables::ENCODE_64;
 use crate::wide::{
     widen_shift, Aligned, DECODE_64_WIDE, ENCODE_32_TAIL, ENCODE_32_WIDE, FLIP_WORDS, HEAD_WEIGHT,
-    MAGIC_3364, MAGIC_58, MAGIC_HIGH, MAGIC_LOW, MAGIC_SMALL, PAIR_3364, PAIR_58,
+    MAGIC_3364, MAGIC_58, MAGIC_HIGH, MAGIC_LOW, MAGIC_SMALL, MIN_ENCODED_32, MIN_ENCODED_64,
+    PAIR_3364, PAIR_58,
 };
+use crate::{MAX_ENCODED_32, MAX_ENCODED_64};
 
 /// One plus the digit, so that zero marks a byte outside the alphabet
 ///
@@ -487,7 +489,11 @@ unsafe fn encode_32_body(words: &[u32; WORDS_32], input_zeros: usize, out: &mut 
         // the mask moved up instead, reads as the cheaper form and measured
         // sixty percent worse: the masked-off lanes reach behind the buffer
         // and the core takes an assist for it.
-        let skip = leading - input_zeros;
+        //
+        // A count from corrupt digits would otherwise widen the store mask.
+        let skip = leading
+            .saturating_sub(input_zeros)
+            .clamp(DIGITS_32 - MAX_ENCODED_32, DIGITS_32 - MIN_ENCODED_32);
         let shift = _mm512_add_epi8(load(IOTA.0.as_ptr()), _mm512_set1_epi8(skip as i8));
         let written = DIGITS_32 - skip;
         _mm512_mask_storeu_epi8(
@@ -554,29 +560,6 @@ pub(crate) unsafe fn encode_64(
     unsafe { spell_90(sum_and_settle_64(words), input_zeros, out) }
 }
 
-/// Spell a signature's limbs, as `sum_64` leaves them, into characters
-///
-/// # Safety
-///
-/// As [`write_32`], with `out` at least `MAX_ENCODED_64` bytes.
-#[target_feature(enable = "avx512f,avx512bw,avx512vl,avx512vbmi")]
-pub(crate) unsafe fn write_64(limbs: [u64; LIMBS_64], input_zeros: usize, out: &mut [u8]) -> usize {
-    // SAFETY: the loads read the caller's limbs.
-    unsafe {
-        let source = limbs.as_ptr() as *const __m512i;
-        let mut terms = [
-            _mm512_loadu_si512(source),
-            _mm512_loadu_si512(source.add(1)),
-            _mm512_maskz_loadu_epi64(
-                low_mask(TOP_LIMBS) as u8,
-                limbs.as_ptr().add(LIMBS_64 - TOP_LIMBS) as *const i64,
-            ),
-        ];
-        settle(&mut terms);
-        spell_90(terms, input_zeros, out)
-    }
-}
-
 /// A signature's settled limbs to the characters they spell
 #[target_feature(enable = "avx512f,avx512bw,avx512vl,avx512vbmi")]
 unsafe fn spell_90(terms: [__m512i; 3], input_zeros: usize, out: &mut [u8]) -> usize {
@@ -606,7 +589,10 @@ unsafe fn spell_90(terms: [__m512i; 3], input_zeros: usize, out: &mut [u8]) -> u
         let chars_low = _mm512_permutexvar_epi8(digits_low, alphabet);
         let chars_high = _mm512_permutexvar_epi8(digits_high, alphabet);
 
-        let skip = leading - input_zeros;
+        // A count from corrupt digits would otherwise widen the store mask.
+        let skip = leading
+            .saturating_sub(input_zeros)
+            .clamp(DIGITS_64 - MAX_ENCODED_64, DIGITS_64 - MIN_ENCODED_64);
         let shift = _mm512_add_epi8(load(IOTA.0.as_ptr()), _mm512_set1_epi8(skip as i8));
         let out_ptr = out.as_mut_ptr();
         _mm512_storeu_si512(
