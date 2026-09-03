@@ -58,13 +58,13 @@ fn noise(seed: u64, into: &mut [u8]) {
 
 fn encoded_32(input: &[u8; 32]) -> Vec<u8> {
     let mut out = [0u8; MAX_ENCODED_32];
-    let len = encode_32(input, &mut out);
+    let len = encode_32(input, &mut out) as usize;
     out[..len].to_vec()
 }
 
 fn encoded_64(input: &[u8; 64]) -> Vec<u8> {
     let mut out = [0u8; MAX_ENCODED_64];
-    let len = encode_64(input, &mut out);
+    let len = encode_64(input, &mut out) as usize;
     out[..len].to_vec()
 }
 
@@ -210,34 +210,34 @@ fn rejects_wrong_width() {
         force(path);
         let mut out = [0u8; 32];
         assert_eq!(
-            decode_32(&vec![b'z'; MAX_ENCODED_32 + 1], &mut out),
+            decode_32(&[b'z'; MAX_ENCODED_32 + 1], &mut out),
             Err(DecodeError::TooLong),
             "path {path}"
         );
         assert_eq!(
-            decode_32(&vec![b'1'; 33], &mut out),
+            decode_32(&[b'1'; 33], &mut out),
             Err(DecodeError::OutputTooLong),
             "path {path}"
         );
         assert_eq!(
-            decode_32(&vec![b'z'; MAX_ENCODED_32], &mut out),
+            decode_32(&[b'z'; MAX_ENCODED_32], &mut out),
             Err(DecodeError::ValueTooLarge),
             "path {path}"
         );
 
         let mut wide = [0u8; 64];
         assert_eq!(
-            decode_64(&vec![b'z'; MAX_ENCODED_64 + 1], &mut wide),
+            decode_64(&[b'z'; MAX_ENCODED_64 + 1], &mut wide),
             Err(DecodeError::TooLong),
             "path {path}"
         );
         assert_eq!(
-            decode_64(&vec![b'1'; 65], &mut wide),
+            decode_64(&[b'1'; 65], &mut wide),
             Err(DecodeError::OutputTooLong),
             "path {path}"
         );
         assert_eq!(
-            decode_64(&vec![b'z'; MAX_ENCODED_64], &mut wide),
+            decode_64(&[b'z'; MAX_ENCODED_64], &mut wide),
             Err(DecodeError::ValueTooLarge),
             "path {path}"
         );
@@ -448,4 +448,28 @@ fn shed_words_matches() {
             assert_eq!(got, wanted, "avx512, length {len}");
         }
     }
+}
+
+// the any length codec spells the same characters on every path
+#[test]
+fn variable_paths() {
+    let _guard = pinned();
+    for path in paths() {
+        force(path);
+        for len in [1usize, 63, 64, 65, 128, 129, 350, 512, 1000, 1231, 1232] {
+            let mut input = vec![0u8; len];
+            noise(len as u64 * 3 + 1, &mut input);
+            input[0] = 0;
+            let expected = bs58::encode(&input).into_vec();
+
+            let mut out = vec![0u8; tape_base58::encoded_len(len)];
+            let written = tape_base58::encode(&input, &mut out).expect("encode");
+            assert_eq!(&out[..written], &expected[..], "path {path}, length {len}");
+
+            let mut back = vec![0u8; tape_base58::decoded_len(written)];
+            let read = tape_base58::decode(&out[..written], &mut back).expect("decode");
+            assert_eq!(&back[..read], &input[..], "path {path}, length {len}");
+        }
+    }
+    force(UNKNOWN);
 }

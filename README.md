@@ -48,11 +48,20 @@ have that problem. The reduction the vector paths share divides every limb at
 once and shifts the quotients a lane down, rather than walking them in a chain
 of dependent divisions.
 
-## Features
+## Any length
 
-`variable` converts input of any length against tables of place values rather
-than walking the value down a limb at a time. It costs about 400 KiB of tables
-and is worth several times the throughput at transaction sizes.
+Input that is neither a key nor a signature is folded rather than walked. A
+whole 64-byte block enters the value at once, so the value is reduced once per
+limb per block instead of once per limb per word, and the multiply that
+replaces the rest has no serial chain in it. It folds in place, against a
+window rather than a second buffer. The constants are about 1.3 KiB, not a
+table. Decoding runs the same trade the other way, ten characters a pass
+into 64-bit words.
+
+Below 128 bytes there is no whole block to fold and the value divides down
+instead, which is cheaper while it is short. Above a packet the scratch comes
+from the heap, so there is no length limit unless the crate is built without
+`alloc`, which is what a program wants.
 
 ## Benchmarks
 

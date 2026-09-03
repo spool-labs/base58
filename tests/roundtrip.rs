@@ -15,13 +15,13 @@ fn noise(seed: u64, into: &mut [u8]) {
 
 fn encoded_32(input: &[u8; 32]) -> Vec<u8> {
     let mut out = [0u8; MAX_ENCODED_32];
-    let len = tape_base58::encode_32(input, &mut out);
+    let len = tape_base58::encode_32(input, &mut out) as usize;
     out[..len].to_vec()
 }
 
 fn encoded_64(input: &[u8; 64]) -> Vec<u8> {
     let mut out = [0u8; MAX_ENCODED_64];
-    let len = tape_base58::encode_64(input, &mut out);
+    let len = tape_base58::encode_64(input, &mut out) as usize;
     out[..len].to_vec()
 }
 
@@ -96,18 +96,79 @@ fn variable_limit() {
         assert_eq!(&back[..read], &input[..], "length {len}");
     }
 
-    let past = vec![7u8; MAX_VARIABLE_LEN + 1];
-    let mut out = vec![0u8; tape_base58::encoded_len(past.len())];
-    assert_eq!(
-        tape_base58::encode(&past, &mut out),
-        Err(tape_base58::EncodeError::InputTooLong)
-    );
+    #[cfg(not(feature = "alloc"))]
+    {
+        let past = vec![7u8; MAX_VARIABLE_LEN + 1];
+        let mut out = vec![0u8; tape_base58::encoded_len(past.len())];
+        assert_eq!(
+            tape_base58::encode(&past, &mut out),
+            Err(tape_base58::EncodeError::InputTooLong)
+        );
+    }
+}
+
+// an encoding standing for more bytes than the stack path takes is refused
+#[cfg(not(feature = "alloc"))]
+#[test]
+fn long_zeros() {
+    let text = vec![b'1'; MAX_VARIABLE_LEN + 1];
+    let mut out = vec![0u8; tape_base58::decoded_len(text.len())];
+    assert!(matches!(
+        tape_base58::decode(&text, &mut out),
+        Err(DecodeError::TooLong)
+    ));
+}
+
+// an allocator lifts the length limit, at widths well past it
+#[cfg(feature = "alloc")]
+#[test]
+fn past_limit() {
+    for len in [
+        MAX_VARIABLE_LEN + 1,
+        MAX_VARIABLE_LEN * 3,
+        MAX_VARIABLE_LEN * 8 + 7,
+    ] {
+        let mut input = vec![0u8; len];
+        noise(len as u64 + 5, &mut input);
+        input[0] = 0;
+        input[1] = 0;
+        let expected = bs58::encode(&input).into_vec();
+
+        let mut out = vec![0u8; tape_base58::encoded_len(len)];
+        let written = tape_base58::encode(&input, &mut out).expect("encode");
+        assert_eq!(&out[..written], &expected[..], "length {len}");
+
+        let mut back = vec![0u8; tape_base58::decoded_len(written)];
+        let read = tape_base58::decode(&out[..written], &mut back).expect("decode");
+        assert_eq!(&back[..read], &input[..], "length {len}");
+    }
+
+    // A run of ones is a byte apiece, which is the widest a decode can grow.
+    let text = vec![b'1'; MAX_VARIABLE_LEN * 4];
+    let mut out = vec![0u8; tape_base58::decoded_len(text.len())];
+    let read = tape_base58::decode(&text, &mut out).expect("decode");
+    assert_eq!(read, text.len());
+    assert!(out[..read].iter().all(|byte| *byte == 0));
+}
+
+// an all-zero input decodes into a buffer sized by decoded_len
+#[test]
+fn zeros_fit() {
+    for len in 0..=MAX_VARIABLE_LEN {
+        let input = vec![0u8; len];
+        let mut text = vec![0u8; tape_base58::encoded_len(len)];
+        let written = tape_base58::encode(&input, &mut text).expect("encode");
+
+        let mut back = vec![0u8; tape_base58::decoded_len(written)];
+        let read = tape_base58::decode(&text[..written], &mut back).expect("decode");
+        assert_eq!(&back[..read], &input[..], "length {len}");
+    }
 }
 
 // variable length input matches the reference at every length it accepts
 #[test]
 fn variable_lengths() {
-    for len in 0..=300usize {
+    for len in 0..=MAX_VARIABLE_LEN {
         let mut input = vec![0u8; len];
         noise(len as u64 + 11, &mut input);
         if len > 3 {

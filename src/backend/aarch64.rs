@@ -6,11 +6,12 @@ use crate::scalar::{
     self, DIGITS_32, DIGITS_64, LIMBS_32, LIMBS_64, PADDED_32, PADDED_64, WORDS_32, WORDS_64,
 };
 use crate::tables::{DECODE_32, DECODE_64};
+use crate::{MAX_ENCODED_32, MAX_ENCODED_64};
 
 /// Characters below which a whole-register read would run past the input
 const MIN_VECTOR_CHARS: usize = 16;
 
-pub(crate) fn encode_32(input: &[u8; 32], out: &mut [u8; crate::MAX_ENCODED_32]) -> usize {
+pub(crate) fn encode_32(input: &[u8; 32], out: &mut [u8; MAX_ENCODED_32]) -> usize {
     let words = scalar::to_words::<32, WORDS_32>(input);
     write_32(
         scalar::sum_32(&words),
@@ -19,7 +20,7 @@ pub(crate) fn encode_32(input: &[u8; 32], out: &mut [u8; crate::MAX_ENCODED_32])
     )
 }
 
-pub(crate) fn encode_64(input: &[u8; 64], out: &mut [u8; crate::MAX_ENCODED_64]) -> usize {
+pub(crate) fn encode_64(input: &[u8; 64], out: &mut [u8; MAX_ENCODED_64]) -> usize {
     let words = scalar::to_words::<64, WORDS_64>(input);
     write_64(
         scalar::sum_64(&words),
@@ -106,7 +107,7 @@ pub(crate) fn words_64_lanes<const LANES: usize>(
 /// is the portable reader's work.
 #[inline(always)]
 pub(crate) fn read_32(encoded: &[u8], limbs: &mut [u32; LIMBS_32]) -> Result<(), DecodeError> {
-    if encoded.len() < MIN_VECTOR_CHARS || encoded.len() > crate::MAX_ENCODED_32 {
+    if encoded.len() < MIN_VECTOR_CHARS || encoded.len() > MAX_ENCODED_32 {
         return scalar::read_32(encoded, limbs);
     }
     let mut digits = [0u8; PADDED_32];
@@ -120,7 +121,7 @@ pub(crate) fn read_32(encoded: &[u8], limbs: &mut [u32; LIMBS_32]) -> Result<(),
 /// Read a signature's encoding into the limbs it stands for
 #[inline(always)]
 pub(crate) fn read_64(encoded: &[u8], limbs: &mut [u32; LIMBS_64]) -> Result<(), DecodeError> {
-    if encoded.len() < MIN_VECTOR_CHARS || encoded.len() > crate::MAX_ENCODED_64 {
+    if encoded.len() < MIN_VECTOR_CHARS || encoded.len() > MAX_ENCODED_64 {
         return scalar::read_64(encoded, limbs);
     }
     let mut digits = [0u8; PADDED_64];

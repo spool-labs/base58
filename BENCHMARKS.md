@@ -37,13 +37,13 @@ them nor the dependencies they need.
 ```sh
 cd bench
 cargo bench --bench paths                          # each x86 path, pinned in turn
-cargo bench --bench against  --features variable   # against five8 and bs58
-cargo bench --bench variable --features variable   # any-length, by size
+cargo bench --bench against                        # against five8 and bs58
+cargo bench --bench variable                       # any-length, by size
 cargo bench --bench codec                          # the dispatched entry points
 cargo bench --bench scalar                         # the portable path alone
 ```
 
-`TAPE_PATH=portable|avx2|avx512` pins the instruction set for `variable`, and
+`TAPE_PATH=portable|avx2|avx512` pins the instruction set, and
 `paths` sweeps all three itself. Pinning goes through `testing::force`, which
 is `#[doc(hidden)]` and exists for this.
 
@@ -367,47 +367,63 @@ than anything about the code.
 
 ## Any length
 
-Zen 5, stock flags, `--features variable`, AVX-512 pinned.
+Anything that is neither a key nor a signature folds a 64-byte block at a
+time. There is no feature flag and no table, only about 1.3 KiB of constants.
+Below 128 bytes the value divides down instead.
 
-| bytes | encode | bs58 | | decode | bs58 | |
-|---|---|---|---|---|---|---|
-| 32 | 20.7 ns | 679 ns | 33× | 67.7 ns | 247 ns | 3.6× |
-| 128 | 323 ns | 12.4 µs | 38× | 229 ns | 3.93 µs | 17× |
-| 256 | 747 ns | 52.7 µs | 71× | 516 ns | 16.6 µs | 32× |
-| 512 | 1.92 µs | 213 µs | 111× | 1.39 µs | 69.3 µs | 50× |
-| 1232 | 8.10 µs | 1.23 ms | **152×** | 5.74 µs | 402 µs | **70×** |
-
-1232 bytes is one Solana packet. five8 has no any-length API, so bs58 is the
-whole field here — and this is the path a transaction crosses on submission.
-
-### What the feature is worth
-
-Zen 5, stock flags, at 1232 bytes.
-
-| | encode | decode |
-|---|---|---|
-| default (no tables) | 45.9 µs | 21.8 µs |
-| `variable`, portable | 16.4 µs | 21.8 µs |
-| `variable`, AVX2 | 11.2 µs | 7.35 µs |
-| `variable`, AVX-512 | **8.10 µs** | **5.74 µs** |
-
-The tables cost about 400 KiB. Two things they do not do:
-
-- **Without the vector kernels they make decode slower** than not having them
-  — the scalar table walk loses to scaling the value directly at every size.
-  A machine with no AVX2 therefore decodes through the table-free path even
-  with the feature on.
-- **They do nothing at 32 bytes.** Encode delegates to the fixed-width path
-  there (20.7 ns against 96 before), so the tables never run.
-
-M4, stock flags, `--features variable`:
+M4 Max, stock flags:
 
 | bytes | encode | bs58 | decode | bs58 |
 |---|---|---|---|---|
-| 32 | 16.9 ns | 1.10 µs | 91.2 ns | 402 ns |
-| 128 | 361 ns | 14.3 µs | 310 ns | 5.13 µs |
-| 512 | 2.71 µs | 246 µs | 2.24 µs | 85.3 µs |
-| 1232 | 16.0 µs | 1.44 ms | 10.9 µs | 501 µs |
+| 128 | 344 ns | 14.8 us | 147 ns | 5.12 us |
+| 512 | 1.89 us | 240 us | 1.46 us | 82.3 us |
+| 1232 | 7.31 us | 1.41 ms | 7.56 us | 489 us |
+
+Zen 5, stock flags:
+
+| bytes | encode | decode |
+|---|---|---|
+| 128 | 501 ns | 170 ns |
+| 512 | 2.91 us | 1.50 us |
+| 1232 | 11.5 us | 8.00 us |
+
+The in place fold is worth 1.32x on encode at a packet on aarch64 and nothing
+on x86, where it measures level against the two buffer form it replaced. It
+is worth taking anyway for the frame it saves.
+
+Encode reads its columns eight to a register on x86, which is worth a further
+1.27x at a packet. The window is widened to 64-bit lanes once a group rather
+than on each load, and three earlier kernels lost to the compiler for want of
+that. Two sheds in place of the settling were tried on top and measured worse,
+so the settling stays as it is.
+
+Past a packet there is no length limit when the crate is built with `alloc`,
+which is on by default. The cost is quadratic and measured so: four times the
+input is about fifteen times the work.
+
+| bytes | encode | decode |
+|---|---|---|
+| 4096 | 127 us | 84.0 us |
+| 16384 | 1.86 ms | 1.28 ms |
+| 65536 | 29.1 ms | 20.3 ms |
+
+Programs build with `default-features = false` and keep the stack path, which
+tops out at `MAX_VARIABLE_LEN`.
+
+1232 bytes is one Solana packet. five8 has no any-length API, so bs58 is the
+whole field here, and this is the path a transaction crosses on submission.
+
+The fold replaced a walk that took 45.9 us to encode a packet on Zen 5 and a
+table path that took 8.10. It beats the walk everywhere and beats the tables
+on aarch64. Whether it now beats them on x86 is open. Hand-written x86 kernels
+for the fold were tried and lost to what the compiler emits on its own.
+
+The value is folded in place. A column is written over a limb the next
+seventeen still need, so a group of thirty-two carries those in a window
+rather than the whole value carrying a second buffer: 1900 bytes of frame
+against 4344, which is what brings it inside an SBF frame. Settling one column
+at a time instead of a group measured 2.2x worse, because a group is what
+keeps the multiply running ahead of the reduction.
 
 ## On chain
 
@@ -473,10 +489,6 @@ took the crate from 33.8 KB to 23.1 and costs 124 CU on `encode_32` and
 Do not reach for `opt-level = "z"` to shrink further. The speed of this
 path is its unrolling, and `z` rolls the loops back up: the tape rows rise
 about four-fold while the binary only loses a quarter of its bytes.
-
-The `variable` feature does not belong in a program. Its decode overflows
-the 4 KB SBF stack frame, and its tables are 420 KB of rent. The fixed
-paths never needed it.
 
 ## Known gaps
 

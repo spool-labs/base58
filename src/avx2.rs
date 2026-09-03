@@ -544,6 +544,9 @@ unsafe fn shift_lane_down_pair(current: __m256i, next: __m256i) -> __m256i {
 /// The tail sums in a general register, off the vector ports, and the last
 /// row of the widened table is all zeros so it is skipped rather than read.
 #[inline(always)]
+// The index pairs a word with its table row and carries the triangular
+// structure the comments describe, so it stays.
+#[allow(clippy::needless_range_loop)]
 unsafe fn sum_32(words: &[u32; WORDS_32]) -> (__m256i, __m256i, u64) {
     // SAFETY: every row is a whole aligned span of the widened table, and
     // `vpmuludq` reads the word from the low half of each lane the broadcast

@@ -101,6 +101,9 @@ pub(crate) fn is_wide_half_width() -> bool {
     }
 }
 
+// `__cpuid` is safe to call from 1.90 on, and this crate still builds on 1.89,
+// so the blocks below stay and the lint that flags them is turned off.
+#[allow(unused_unsafe)]
 fn probe_half_width() -> bool {
     use core::arch::x86_64::__cpuid;
 
@@ -123,6 +126,7 @@ fn probe_half_width() -> bool {
 
 /// Whether the processor and the operating system offer the wide permutes, and
 /// separately whether they offer AVX2
+#[allow(unused_unsafe)]
 unsafe fn probe() -> (bool, bool) {
     use core::arch::x86_64::{__cpuid, __cpuid_count, _xgetbv};
 

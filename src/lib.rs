@@ -9,6 +9,9 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
 mod backend;
 
 #[cfg(target_arch = "x86_64")]
@@ -22,18 +25,15 @@ mod dispatch;
 
 mod batch;
 mod error;
+mod fold;
 #[cfg(target_arch = "aarch64")]
 mod neon;
 #[cfg(target_arch = "x86_64")]
 mod wide;
 
-#[cfg(feature = "variable")]
-mod place_values;
-
 mod scalar;
 mod tables;
 mod variable;
-mod variable_simd;
 
 pub use batch::{decode_32_batch, decode_64_batch, encode_32_batch, encode_64_batch};
 
@@ -65,9 +65,6 @@ pub mod testing {
         read_64 as wide_read_64, words_from_limbs_64 as wide_words_from_limbs_64,
     };
     pub use crate::tables::{DECODE_32, DECODE_64, ENCODE_32, ENCODE_64};
-
-    #[cfg(feature = "variable")]
-    pub use crate::place_values::{LIMB_OFFSETS, LIMB_VALUES, PLACE_OFFSETS, PLACE_VALUES};
 
     /// Pin the codec to one path, so a test can reach the ones this machine
     /// would not have chosen for itself
@@ -103,13 +100,18 @@ pub const MAX_ENCODED_32: usize = 44;
 pub const MAX_ENCODED_64: usize = 88;
 
 /// Encode a public key, returning how many bytes of the output were written
-pub fn encode_32(input: &[u8; KEY_LEN], out: &mut [u8; MAX_ENCODED_32]) -> usize {
-    backend::encode_32(input, out)
+///
+/// The count is a `u8` because `MAX_ENCODED_32` is 44, so it always fits, and
+/// callers holding it alongside a fixed-width buffer keep it byte-sized.
+pub fn encode_32(input: &[u8; KEY_LEN], out: &mut [u8; MAX_ENCODED_32]) -> u8 {
+    backend::encode_32(input, out) as u8
 }
 
 /// Encode a signature, returning how many bytes of the output were written
-pub fn encode_64(input: &[u8; SIGNATURE_LEN], out: &mut [u8; MAX_ENCODED_64]) -> usize {
-    backend::encode_64(input, out)
+///
+/// The count is a `u8` because `MAX_ENCODED_64` is 88, so it always fits.
+pub fn encode_64(input: &[u8; SIGNATURE_LEN], out: &mut [u8; MAX_ENCODED_64]) -> u8 {
+    backend::encode_64(input, out) as u8
 }
 
 /// Decode a public key, rejecting anything that is not exactly 32 bytes wide

@@ -349,6 +349,9 @@ unsafe fn encode_multiply_add(total: __m512i, word: __m512i, row: *const u64) ->
 ///
 /// Limbs 0..16 in two vector accumulators and the last two in an xmm pair.
 #[target_feature(enable = "avx512f,avx512bw,avx512vl,avx512vbmi")]
+// The index pairs a word with its table row and carries the triangular
+// structure the comments describe, so it stays.
+#[allow(clippy::needless_range_loop)]
 unsafe fn sum_and_settle_64(words: &[u32; WORDS_64]) -> [__m512i; 3] {
     // SAFETY: every row is a whole aligned span of the widened table.
     unsafe {

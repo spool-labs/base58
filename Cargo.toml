@@ -1,23 +1,25 @@
 [package]
 name = "tape-base58"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.89"
 description = "Fast base58 encoding and decoding for Solana-shaped data"
 license = "Apache-2.0"
-repository = "https://github.com/tape-public/base58"
+repository = "https://github.com/spool-labs/base58"
 keywords = ["base58", "solana", "simd", "encoding"]
 categories = ["encoding", "no-std"]
 
-exclude = ["BENCHMARKS.md"]
+exclude = ["BENCHMARKS.md", ".github"]
 
 [lints.rust.unexpected_cfgs]
 level = "warn"
 check-cfg = ['cfg(target_os, values("solana"))']
 
 [features]
-default = []
-variable = []
+default = ["alloc"]
+
+# Heap scratch, which lifts the length limit. Off for programs.
+alloc = []
 
 [dependencies]
 

@@ -5,13 +5,8 @@
 //! a whole base 58^5 limb across 32-bit words, where the textbook form pulls out
 //! one digit across bytes.
 
-#[cfg(feature = "variable")]
-use crate::place_values::{
-    LIMB_OFFSETS, LIMB_ROWS, LIMB_VALUES, LIMB_WIDTH, PLACE_OFFSETS, PLACE_ROWS, PLACE_VALUES,
-    PLACE_WIDTH,
-};
-
 use crate::error::{DecodeError, EncodeError};
+use crate::fold::fold_in_place;
 use crate::scalar::{
     check_leading_ones, digit_of, leading_zero_bytes, ALPHABET, DIGITS_PER_LIMB, LIMB_BASE,
 };
@@ -27,29 +22,27 @@ const MAX_WORDS: usize = MAX_VARIABLE_LEN.div_ceil(4);
 
 // The tables are generated against the limit above, so a limit that moved
 // without them says so here rather than by converting something wrongly.
-#[cfg(feature = "variable")]
-const _: () = assert!(
-    PLACE_ROWS >= MAX_WORDS,
-    "place values do not reach MAX_VARIABLE_LEN, regenerate src/place_values.rs"
-);
-#[cfg(feature = "variable")]
-const _: () = assert!(
-    LIMB_ROWS >= (MAX_VARIABLE_LEN * 138 / 100 + 2).div_ceil(DIGITS_PER_LIMB),
-    "limb places do not reach MAX_VARIABLE_LEN, regenerate src/place_values.rs"
-);
 
 /// Longest encoding an input of this many bytes can produce
-pub fn encoded_len(input_len: usize) -> usize {
+pub const fn encoded_len(input_len: usize) -> usize {
     input_len * 138 / 100 + 2
 }
 
 /// Most bytes an encoding of this many characters can produce
-pub fn decoded_len(encoded_len: usize) -> usize {
-    encoded_len * 733 / 1000 + 2
+///
+/// A leading one stands for a zero byte apiece, so an encoding that is all
+/// ones is as many bytes as it is characters. Everything else is shorter.
+pub const fn decoded_len(encoded_len: usize) -> usize {
+    let scaled = encoded_len * 733 / 1000 + 2;
+    match scaled > encoded_len {
+        true => scaled,
+        false => encoded_len,
+    }
 }
 
 /// Encode bytes of any length up to the codec's limit
 pub fn encode(input: &[u8], out: &mut [u8]) -> Result<usize, EncodeError> {
+    #[cfg(not(feature = "alloc"))]
     if input.len() > MAX_VARIABLE_LEN {
         return Err(EncodeError::InputTooLong);
     }
@@ -61,9 +54,7 @@ pub fn encode(input: &[u8], out: &mut [u8]) -> Result<usize, EncodeError> {
         return Ok(written);
     }
 
-    let mut words = [0u32; MAX_WORDS];
-    let used = load_words(&input[zeros..], &mut words);
-    let count = spell(&mut words, used, &mut out[zeros..]);
+    let count = spell(&input[zeros..], &mut out[zeros..]);
 
     for slot in out.iter_mut().take(zeros) {
         *slot = ALPHABET[0];
@@ -92,60 +83,204 @@ fn spell_fixed(input: &[u8], out: &mut [u8]) -> Option<usize> {
     }
 }
 
-/// Spell the value in `words[..used]` as characters, returning how many
+/// Spell the value as characters, returning how many
+fn spell(src: &[u8], out: &mut [u8]) -> usize {
+    if src.len() >= FOLD_BYTES {
+        return spell_by_folding(src, out);
+    }
+    let mut words = [0u32; MAX_WORDS];
+    let used = load_words(src, &mut words);
+    spell_by_dividing(&mut words, used, out)
+}
+
+/// Bytes below which dividing the value down beats folding it
+const FOLD_BYTES: usize = 128;
+
+/// Bytes folded into the value in one step
+const BLOCK: usize = 64;
+
+/// Limbs 2^512 occupies in limb base
+pub(crate) const BLOCK_LIMBS: usize = 18;
+
+/// Limbs a block's own value occupies, with a slot of headroom
+pub(crate) const BLOCK_DIGITS: usize = 19;
+
+/// Limbs the value and its window need for an input this long
+const fn fold_limbs(input_len: usize) -> usize {
+    (input_len * 138 / 100 + 2).div_ceil(DIGITS_PER_LIMB) + BLOCK_DIGITS + 2
+}
+
+/// Limbs the widest input the stack path takes needs
+const FOLD_LIMBS: usize = fold_limbs(MAX_VARIABLE_LEN);
+
+/// Multiply a little-endian bignum by two, in limb base
+const fn doubled(mut limbs: [u32; BLOCK_LIMBS]) -> [u32; BLOCK_LIMBS] {
+    let mut carry = 0u64;
+    let mut at = 0;
+    while at < BLOCK_LIMBS {
+        let value = limbs[at] as u64 * 2 + carry;
+        limbs[at] = (value % LIMB_BASE) as u32;
+        carry = value / LIMB_BASE;
+        at += 1;
+    }
+    assert!(carry == 0, "a power of two ran past the limbs it was given");
+    limbs
+}
+
+/// 2^exponent as little-endian limbs
+const fn power_of_two(exponent: usize) -> [u32; BLOCK_LIMBS] {
+    let mut limbs = [0u32; BLOCK_LIMBS];
+    limbs[0] = 1;
+    let mut done = 0;
+    while done < exponent {
+        limbs = doubled(limbs);
+        done += 1;
+    }
+    limbs
+}
+
+/// What each of a block's sixteen words is worth
 ///
-/// A short value divides down; past [`HORNER_WORDS`] the Horner walk takes
-/// over, which costs no table and no serial chain.
-#[cfg(not(feature = "variable"))]
-fn spell(words: &mut [u32; MAX_WORDS], used: usize, out: &mut [u8]) -> usize {
-    match used < HORNER_WORDS {
-        true => spell_by_dividing(words, used, out),
-        false => spell_by_horner(&words[..used], out),
+/// Shifted one place along rather than raised from scratch each time, which
+/// keeps the compile-time cost down.
+const fn block_places() -> [[u32; BLOCK_LIMBS]; 16] {
+    let mut table = [[0u32; BLOCK_LIMBS]; 16];
+    let mut value = [0u32; BLOCK_LIMBS];
+    value[0] = 1;
+    let mut at = 0;
+    while at < 16 {
+        table[15 - at] = value;
+        let mut done = 0;
+        while done < 32 {
+            value = doubled(value);
+            done += 1;
+        }
+        at += 1;
+    }
+    table
+}
+
+/// What a whole block is worth, which is what a fold multiplies by
+pub(crate) const POWER: [u32; BLOCK_LIMBS] = power_of_two(512);
+
+/// The same, highest place first and a lane apiece
+///
+/// A column reads its window forward against this, and a vector multiply
+/// takes the low half of each 64-bit lane, so the places are widened once
+/// here rather than on every load.
+#[cfg(target_arch = "x86_64")]
+pub(crate) const POWER_REV: [u64; BLOCK_LIMBS] = reversed(POWER);
+
+/// Turn the places around and widen them
+#[cfg(target_arch = "x86_64")]
+const fn reversed(limbs: [u32; BLOCK_LIMBS]) -> [u64; BLOCK_LIMBS] {
+    let mut lanes = [0u64; BLOCK_LIMBS];
+    let mut at = 0;
+    while at < BLOCK_LIMBS {
+        lanes[at] = limbs[BLOCK_LIMBS - 1 - at] as u64;
+        at += 1;
+    }
+    lanes
+}
+
+/// What each word of a block is worth
+const PLACE: [[u32; BLOCK_LIMBS]; 16] = block_places();
+
+/// Spell the value by folding it a block at a time
+///
+/// Each step is value = value * 2^512 + block, so the value is reduced once
+/// per limb per 64 bytes rather than once per limb per word.
+fn spell_by_folding(src: &[u8], out: &mut [u8]) -> usize {
+    let needed = fold_limbs(src.len());
+    if needed > FOLD_LIMBS {
+        #[cfg(feature = "alloc")]
+        {
+            let mut value = alloc::vec![0u32; needed];
+            return fold_and_spell(src, &mut value, out);
+        }
+        #[cfg(not(feature = "alloc"))]
+        unreachable!("encode turns away anything the stack path cannot hold");
+    }
+    let mut value = [0u32; FOLD_LIMBS];
+    fold_and_spell(src, &mut value, out)
+}
+
+/// Fold the input into the limbs it is handed, then spell them
+fn fold_and_spell(src: &[u8], value: &mut [u32], out: &mut [u8]) -> usize {
+    // Whatever is not a whole block, taken while the value is still short.
+    let (head, blocks) = src.split_at(src.len() % BLOCK);
+    let ragged = head.len() % 4;
+    let mut count = 0;
+    if ragged > 0 {
+        let mut word = 0u64;
+        for byte in &head[..ragged] {
+            word = (word << 8) | *byte as u64;
+        }
+        raise(value, &mut count, 1u64 << (8 * ragged), word);
+    }
+    for chunk in head[ragged..].as_chunks::<4>().0 {
+        let word = u32::from_be_bytes(*chunk);
+        raise(value, &mut count, 1u64 << 32, word as u64);
+    }
+
+    for block in blocks.as_chunks::<BLOCK>().0 {
+        let digits = block_digits(block);
+        count = fold_in_place(value, count, &digits);
+    }
+
+    write_limbs(&value[..count], out)
+}
+
+/// `value = value * scale + word`, for the head of an input
+fn raise(value: &mut [u32], count: &mut usize, scale: u64, word: u64) {
+    let mut carry = word;
+    for limb in value[..*count].iter_mut() {
+        let wide = *limb as u64 * scale + carry;
+        *limb = (wide % LIMB_BASE) as u32;
+        carry = wide / LIMB_BASE;
+    }
+    while carry > 0 {
+        value[*count] = (carry % LIMB_BASE) as u32;
+        carry /= LIMB_BASE;
+        *count += 1;
     }
 }
 
-/// Words above which Horner's walk beats dividing the value down
+/// Read a block's sixteen words as limbs
 ///
-/// The two are level here and the walk pulls away past it, several times
-/// over by a whole packet.
-#[cfg(not(feature = "variable"))]
-const HORNER_WORDS: usize = 32;
-
-/// Limbs the widest input's encoding reaches, with the sheds' margin
-#[cfg(not(feature = "variable"))]
-const HORNER_LIMBS: usize = (MAX_VARIABLE_LEN * 138 / 100 + 2).div_ceil(DIGITS_PER_LIMB) + 2;
-
-/// Spell the value by Horner's walk, without tables
-///
-/// Each word shifts the whole value 32 bits and lands on the lowest limb.
-/// The shift and the sheds run every limb independently, which is the lane
-/// shape the dividing chain lacks; [`crate::variable_simd`] runs them. The
-/// tables replace this walk entirely, so it only exists without them.
-#[cfg(not(feature = "variable"))]
-fn spell_by_horner(words: &[u32], out: &mut [u8]) -> usize {
-    let mut limbs = [0u64; HORNER_LIMBS];
-    let count = crate::variable_simd::horner_places(words, &mut limbs);
-    settle_upward(&mut limbs[..count]);
-    write_limbs(&limbs[..count], out)
-}
-
-/// Spell the value in `words[..used]` as characters, returning how many
-///
-/// A short value is still quicker divided down: the table path clears limbs
-/// enough for the widest input this codec takes whatever it is handed, and
-/// below this many words that costs more than the divisions do. Measured; the
-/// two are within a percent of each other at the word this turns on.
-#[cfg(feature = "variable")]
-fn spell(words: &mut [u32; MAX_WORDS], used: usize, out: &mut [u8]) -> usize {
-    match used < TABLE_WORDS {
-        true => spell_by_dividing(words, used, out),
-        false => spell_by_table(words, used, out),
+/// The halves are reduced apart so a column stays inside a u64.
+fn block_digits(block: &[u8]) -> [u32; BLOCK_DIGITS] {
+    let mut words = [0u32; 16];
+    for (slot, chunk) in words.iter_mut().zip(block.as_chunks::<4>().0) {
+        *slot = u32::from_be_bytes(*chunk);
     }
-}
 
-/// Words below which dividing the value down beats reading the table
-#[cfg(feature = "variable")]
-const TABLE_WORDS: usize = 12;
+    let mut digits = [0u32; BLOCK_DIGITS];
+    let mut wide = [0u64; BLOCK_LIMBS];
+    for half in [0usize, 8] {
+        for (word, row) in words[half..half + 8].iter().zip(PLACE[half..].iter()) {
+            let word = *word as u64;
+            for (slot, place) in wide.iter_mut().zip(row.iter()) {
+                *slot += word * *place as u64;
+            }
+        }
+        let mut carry = 0u64;
+        for (slot, digit) in wide.iter_mut().zip(digits.iter_mut()) {
+            let value = *slot + carry;
+            *digit = (value % LIMB_BASE) as u32;
+            carry = value / LIMB_BASE;
+            *slot = 0;
+        }
+        digits[BLOCK_LIMBS] = carry as u32;
+        if half == 0 {
+            for (slot, digit) in wide.iter_mut().zip(digits.iter()) {
+                *slot = *digit as u64;
+            }
+            digits[BLOCK_LIMBS] = 0;
+        }
+    }
+    digits
+}
 
 /// Spell the value by dividing it down by the limb base a limb at a time
 ///
@@ -184,36 +319,16 @@ fn spell_by_dividing(words: &mut [u32; MAX_WORDS], used: usize, out: &mut [u8]) 
     count
 }
 
-/// Spell the value against the table of place values
-///
-/// Every word's contribution to every limb is a multiply-accumulate, and none
-/// of them wait on each other. Carries are left to build up and shed in passes
-/// of their own, so the only ordered work left is one settling at the end. This
-/// is the same shape the fixed widths use, and it costs the table it reads:
-/// see [`crate::place_values`].
-#[cfg(feature = "variable")]
-fn spell_by_table(words: &mut [u32; MAX_WORDS], used: usize, out: &mut [u8]) -> usize {
-    if used == 0 {
-        return 0;
-    }
-    // A word at the highest place carries two limbs past the place itself.
-    let count = place_row(used - 1).len() + 2;
-    let mut limbs = [0u64; PLACE_WIDTH];
-    accumulate_places(&words[..used], count, &mut limbs);
-    settle_upward(&mut limbs[..count]);
-    write_limbs(&limbs[..count], out)
-}
-
 /// Spell settled limbs as characters, least significant first, then turn
 /// them around
-fn write_limbs(limbs: &[u64], out: &mut [u8]) -> usize {
+fn write_limbs(limbs: &[u32], out: &mut [u8]) -> usize {
     let mut top = limbs.len();
     while top > 0 && limbs[top - 1] == 0 {
         top -= 1;
     }
     let mut written = 0;
     for (at, limb) in limbs[..top].iter().enumerate() {
-        let mut value = *limb;
+        let mut value = *limb as u64;
         // The highest limb spells only the digits the value reaches into.
         let mut take = DIGITS_PER_LIMB;
         if at + 1 == top {
@@ -234,269 +349,111 @@ fn write_limbs(limbs: &[u64], out: &mut [u8]) -> usize {
     written
 }
 
-/// Add every word's contribution to every limb it reaches
-///
-/// The accumulation is a row of multiply-accumulates against nothing else,
-/// taken through whatever kernels the machine has: see
-/// [`crate::variable_simd`].
-#[cfg(feature = "variable")]
-fn accumulate_places(words: &[u32], count: usize, limbs: &mut [u64; PLACE_WIDTH]) {
-    crate::variable_simd::accumulate_places(words, count, limbs);
-}
-
-/// Words accumulated before the limbs are brought back within a word
-///
-/// A word is below 2^32 and a table entry below the limb base, so six of their
-/// products is the most a limb can hold without passing what a `u64` counts.
-#[cfg(feature = "variable")]
-pub(crate) const SHED: usize = 6;
-
-/// The limbs a power of two occupies, least significant first
-#[cfg(feature = "variable")]
-pub(crate) fn place_row(power: usize) -> &'static [u32] {
-    let from = PLACE_OFFSETS[power] as usize;
-    let until = PLACE_OFFSETS[power + 1] as usize;
-    &PLACE_VALUES[from..until]
-}
-
-/// Hand each limb's overflow to the limb above it, once, without settling
-///
-/// Every quotient is taken from the limb's value before anything lands on
-/// it, and the one in flight rides a register, so no division queues behind
-/// another the way a settling pass makes them — and none of it round-trips
-/// through the stores, which compiled to a chain three times the cost when
-/// this walked downward in place. What is left is not below the limb base,
-/// only far enough below what a `u64` holds that another [`SHED`] words can
-/// land on it. The topmost limb only receives: shedding it would carry off
-/// the end.
-pub(crate) fn shed(limbs: &mut [u64]) {
-    let Some(last) = limbs.len().checked_sub(1) else {
-        return;
-    };
-    let mut carry = 0;
-    for limb in limbs[..last].iter_mut() {
-        let value = *limb;
-        *limb = value % LIMB_BASE + carry;
-        carry = value / LIMB_BASE;
-    }
-    limbs[last] += carry;
-}
-
-/// Carry every limb up until each one is below the limb base
-fn settle_upward(limbs: &mut [u64]) {
-    let mut carry = 0u64;
-    for limb in limbs.iter_mut() {
-        let value = *limb + carry;
-        carry = value / LIMB_BASE;
-        *limb = value % LIMB_BASE;
-    }
-    debug_assert_eq!(carry, 0, "the value ran past the limbs it was given");
-}
-
 /// Decode characters of any length up to the codec's limit
 pub fn decode(encoded: &[u8], out: &mut [u8]) -> Result<usize, DecodeError> {
+    #[cfg(not(feature = "alloc"))]
     if encoded.len() > encoded_len(MAX_VARIABLE_LEN) {
         return Err(DecodeError::TooLong);
     }
     let ones = leading_ones(encoded);
-    let mut words = [0u32; MAX_WORDS];
-    let used = gather(&encoded[ones..], &mut words)?;
-
-    let value_len = used * 4;
-    let mut buffer = [0u8; MAX_WORDS * 4];
-    for (word, chunk) in words[..used]
-        .iter()
-        .zip(buffer[..value_len].chunks_exact_mut(4))
-    {
-        chunk.copy_from_slice(&word.to_be_bytes());
+    let needed = value_words(encoded.len());
+    if needed > MAX_VALUE_WORDS {
+        #[cfg(feature = "alloc")]
+        {
+            let mut words = alloc::vec![0u64; needed];
+            return lay_out(encoded, ones, &mut words, out);
+        }
+        #[cfg(not(feature = "alloc"))]
+        unreachable!("decode turns away anything the stack path cannot hold");
     }
-    let skip = leading_zero_bytes(&buffer[..value_len]);
-    let body = value_len - skip;
+    let mut words = [0u64; MAX_VALUE_WORDS];
+    lay_out(encoded, ones, &mut words, out)
+}
+
+/// Read the characters into the words handed over, then lay them out as bytes
+fn lay_out(
+    encoded: &[u8],
+    ones: usize,
+    words: &mut [u64],
+    out: &mut [u8],
+) -> Result<usize, DecodeError> {
+    let used = gather(&encoded[ones..], words)?;
+
+    // Only the topmost word can carry leading zero bytes, and `gather` never
+    // leaves it empty, so the whole value's leading run is that word's.
+    let skip = match used {
+        0 => 0,
+        _ => words[used - 1].leading_zeros() as usize / 8,
+    };
+    let body = used * 8 - skip;
+    // A run of ones is one byte apiece, so an encoding short enough to accept
+    // can still stand for a value this codec would refuse to encode.
+    #[cfg(not(feature = "alloc"))]
+    if ones + body > MAX_VARIABLE_LEN {
+        return Err(DecodeError::TooLong);
+    }
     if out.len() < ones + body {
         return Err(DecodeError::OutputTooLong);
     }
     for slot in out.iter_mut().take(ones) {
         *slot = 0;
     }
-    out[ones..ones + body].copy_from_slice(&buffer[skip..value_len]);
+    let mut at = ones;
+    for (index, word) in words[..used].iter().rev().enumerate() {
+        let bytes = word.to_be_bytes();
+        let from = match index {
+            0 => skip,
+            _ => 0,
+        };
+        out[at..at + 8 - from].copy_from_slice(&bytes[from..]);
+        at += 8 - from;
+    }
     check_leading_ones(&out[..ones + body], encoded)?;
     Ok(ones + body)
 }
 
-/// Read the characters into `words`, most significant first, returning how many
-#[cfg(not(feature = "variable"))]
-fn gather(encoded: &[u8], words: &mut [u32; MAX_WORDS]) -> Result<usize, DecodeError> {
-    gather_by_scaling(encoded, words)
+/// Base58 digits read in one pass over the value
+///
+/// Ten fits because 58^10 still multiplies a 64-bit word inside a u128.
+const CHARS_PER_PASS: usize = 10;
+
+/// `58^10`, what a whole pass is worth
+const PASS_SCALE: u64 = 430_804_206_899_405_824;
+
+/// Words an encoding this long can occupy, least significant first
+const fn value_words(encoded_len: usize) -> usize {
+    encoded_len.div_ceil(8) + 1
 }
 
-/// Read the characters by scaling the value a run at a time
+/// Words the widest encoding the stack path takes occupies
+const MAX_VALUE_WORDS: usize = value_words(encoded_len(MAX_VARIABLE_LEN));
+
+/// Read the characters into words, returning how many they filled
 ///
-/// Each scaling waits on the one before it, which is what the table path
-/// avoids — wherever the machine gives the tables lanes to pay for it.
-fn gather_by_scaling(encoded: &[u8], words: &mut [u32; MAX_WORDS]) -> Result<usize, DecodeError> {
+/// Each scaling waits on the one before it, so a pass is made as wide as a
+/// u128 product allows.
+fn gather(encoded: &[u8], words: &mut [u64]) -> Result<usize, DecodeError> {
     let mut used = 0;
-    let mut at = 0;
-    while at < encoded.len() {
-        let take = (encoded.len() - at).min(DIGITS_PER_LIMB);
-        let mut limb = 0u64;
+    // The short run leads, so every other pass reads the same scale. Either
+    // way the characters go front to back, which names a bad one by position.
+    let ragged = encoded.len() % CHARS_PER_PASS;
+    if ragged > 0 {
+        let mut value = 0u64;
         let mut scale = 1u64;
-        for byte in &encoded[at..at + take] {
-            limb = limb * 58 + digit_of(*byte)? as u64;
+        for byte in &encoded[..ragged] {
+            value = value * 58 + digit_of(*byte)? as u64;
             scale *= 58;
         }
-        used = multiply_add(words, used, scale, limb)?;
-        at += take;
+        used = multiply_add(words, used, scale, value)?;
+    }
+    for run in encoded[ragged..].as_chunks::<CHARS_PER_PASS>().0 {
+        let mut value = 0u64;
+        for byte in run {
+            value = value * 58 + digit_of(*byte)? as u64;
+        }
+        used = multiply_add(words, used, PASS_SCALE, value)?;
     }
     Ok(used)
-}
-
-/// Read the characters into `words`, most significant first, returning how many
-///
-/// Every limb's contribution to every word is a multiply-accumulate against a
-/// table of the limb base's powers, and none of them wait on each other. The
-/// mirror of the table path in [`spell`], and it costs the same kind of table:
-/// see [`crate::place_values`].
-#[cfg(feature = "variable")]
-fn gather(encoded: &[u8], words: &mut [u32; MAX_WORDS]) -> Result<usize, DecodeError> {
-    // A machine without vector kernels reads faster by scaling: the table
-    // product costs more than the chain it replaces without lanes behind it.
-    if !crate::variable_simd::tables_win_decoding() {
-        return gather_by_scaling(encoded, words);
-    }
-    if encoded.is_empty() {
-        return Ok(0);
-    }
-    let count = encoded.len().div_ceil(DIGITS_PER_LIMB);
-
-    // The run that is short is the leading one, so every other run sits at a
-    // whole power of the limb base. Either reader takes them front to back
-    // regardless, which names a bad character by where it is rather than by
-    // which run holds it.
-    let first = encoded.len() - (count - 1) * DIGITS_PER_LIMB;
-    // A limb at the highest place carries two words past the place itself.
-    let width = limb_row(count - 1).len() + 2;
-    let mut wide = [0u64; LIMB_WIDTH];
-    match count <= FUSED_LIMBS {
-        true => read_into_words(encoded, count, first, width, &mut wide)?,
-        false => read_through_buffer(encoded, count, first, width, &mut wide)?,
-    }
-    settle_words_upward(&mut wide[..width]);
-
-    let mut top = width;
-    while top > 0 && wide[top - 1] == 0 {
-        top -= 1;
-    }
-    if top > MAX_WORDS {
-        return Err(DecodeError::TooLong);
-    }
-    for (at, word) in wide[..top].iter().rev().enumerate() {
-        words[at] = *word as u32;
-    }
-    Ok(top)
-}
-
-/// Limbs above which reading them into a buffer of their own pays for itself
-///
-/// The buffer costs the same to clear however short the input is, and below
-/// this many limbs that fixed cost is more than the accumulation gives up by
-/// having the reading of a run sitting in the middle of it. Measured; the two
-/// are within a few percent of each other on either side of it.
-#[cfg(feature = "variable")]
-const FUSED_LIMBS: usize = 28;
-
-/// Read each run of characters and add it in where it is read
-#[cfg(feature = "variable")]
-fn read_into_words(
-    encoded: &[u8],
-    count: usize,
-    first: usize,
-    width: usize,
-    wide: &mut [u64; LIMB_WIDTH],
-) -> Result<(), DecodeError> {
-    let mut at = 0;
-    for (read, index) in (0..count).rev().enumerate() {
-        let take = if at == 0 { first } else { DIGITS_PER_LIMB };
-        let mut limb = 0u64;
-        for byte in &encoded[at..at + take] {
-            limb = limb * 58 + digit_of(*byte)? as u64;
-        }
-        at += take;
-
-        for (word, entry) in wide.iter_mut().zip(limb_row(index).iter()) {
-            *word += limb * *entry as u64;
-        }
-        if (read + 1) % SHED == 0 {
-            shed_words(&mut wide[..width]);
-        }
-    }
-    Ok(())
-}
-
-/// Read every run of characters first, then add them all in
-///
-/// Reading is a chain per run and carries a branch for a character outside the
-/// alphabet. Kept away from the accumulation, the accumulation is a row of
-/// multiply-accumulates against nothing else, which is what lets it be taken
-/// several at a time.
-#[cfg(feature = "variable")]
-fn read_through_buffer(
-    encoded: &[u8],
-    count: usize,
-    first: usize,
-    width: usize,
-    wide: &mut [u64; LIMB_WIDTH],
-) -> Result<(), DecodeError> {
-    let mut limbs = [0u32; LIMB_ROWS];
-    let mut at = 0;
-    for index in (0..count).rev() {
-        let take = if at == 0 { first } else { DIGITS_PER_LIMB };
-        let mut value = 0u32;
-        for byte in &encoded[at..at + take] {
-            value = value * 58 + digit_of(*byte)? as u32;
-        }
-        limbs[index] = value;
-        at += take;
-    }
-
-    crate::variable_simd::accumulate_limbs(&limbs[..count], width, wide);
-    Ok(())
-}
-
-/// The words a power of the limb base occupies, least significant first
-#[cfg(feature = "variable")]
-pub(crate) fn limb_row(power: usize) -> &'static [u32] {
-    let from = LIMB_OFFSETS[power] as usize;
-    let until = LIMB_OFFSETS[power + 1] as usize;
-    &LIMB_VALUES[from..until]
-}
-
-/// Hand each word's overflow to the word above it, once, without settling
-///
-/// The same register-riding walk as [`shed`], for the same reason.
-#[cfg(feature = "variable")]
-pub(crate) fn shed_words(wide: &mut [u64]) {
-    let Some(last) = wide.len().checked_sub(1) else {
-        return;
-    };
-    let mut carry = 0;
-    for word in wide[..last].iter_mut() {
-        let value = *word;
-        *word = (value & 0xFFFF_FFFF) + carry;
-        carry = value >> 32;
-    }
-    wide[last] += carry;
-}
-
-/// Carry every word up until each one is below 2^32
-#[cfg(feature = "variable")]
-fn settle_words_upward(wide: &mut [u64]) {
-    let mut carry = 0u64;
-    for word in wide.iter_mut() {
-        let value = *word + carry;
-        carry = value >> 32;
-        *word = value & 0xFFFF_FFFF;
-    }
-    debug_assert_eq!(carry, 0, "the value ran past the words it was given");
 }
 
 /// Leading base58 zeros, which stand for leading zero bytes
@@ -541,27 +498,28 @@ fn divide_by_limb_base(words: &mut [u32]) -> u64 {
     carry
 }
 
-/// Scale the value in place and add a limb, growing it by a word if it carries
+/// `value = value * scale + add`, over the words the value occupies
 fn multiply_add(
-    words: &mut [u32; MAX_WORDS],
+    words: &mut [u64],
     used: usize,
     scale: u64,
     add: u64,
 ) -> Result<usize, DecodeError> {
-    let mut carry = add;
-    for word in words[..used].iter_mut().rev() {
-        let acc = *word as u64 * scale + carry;
-        *word = acc as u32;
-        carry = acc >> 32;
+    let mut carry = add as u128;
+    let scale = scale as u128;
+    for word in words[..used].iter_mut() {
+        let wide = *word as u128 * scale + carry;
+        *word = wide as u64;
+        carry = wide >> 64;
     }
+    // The words grow upward, so an oversized value is caught here.
     let mut grown = used;
-    while carry != 0 {
-        if grown == MAX_WORDS {
+    while carry > 0 {
+        if grown == words.len() {
             return Err(DecodeError::TooLong);
         }
-        words.copy_within(..grown, 1);
-        words[0] = carry as u32;
-        carry >>= 32;
+        words[grown] = carry as u64;
+        carry >>= 64;
         grown += 1;
     }
     Ok(grown)

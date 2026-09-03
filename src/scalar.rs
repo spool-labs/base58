@@ -70,7 +70,7 @@ const PAIR_BASE: u32 = 58 * 58;
 /// Every value below [`PAIR_BASE`] as the two characters it spells
 ///
 /// Halves the work of splitting a limb: two divisions instead of four, and
-/// three lookups instead of five. 
+/// three lookups instead of five.
 #[cfg(not(target_os = "solana"))]
 const PAIRS: [u16; 4096] = build_pairs();
 
@@ -166,8 +166,8 @@ pub(crate) fn read_64(encoded: &[u8], limbs: &mut [u32; LIMBS_64]) -> Result<(),
 /// Read the input as big-endian 32-bit words
 pub fn to_words<const BYTES: usize, const WORDS: usize>(input: &[u8; BYTES]) -> [u32; WORDS] {
     let mut words = [0u32; WORDS];
-    for (word, chunk) in words.iter_mut().zip(input.chunks_exact(4)) {
-        *word = u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+    for (word, chunk) in words.iter_mut().zip(input.as_chunks::<4>().0) {
+        *word = u32::from_be_bytes(*chunk);
     }
     words
 }
@@ -177,8 +177,8 @@ pub(crate) fn from_words<const BYTES: usize, const WORDS: usize>(
     words: &[u32; WORDS],
     out: &mut [u8; BYTES],
 ) {
-    for (word, chunk) in words.iter().zip(out.chunks_exact_mut(4)) {
-        chunk.copy_from_slice(&word.to_be_bytes());
+    for (word, chunk) in words.iter().zip(out.as_chunks_mut::<4>().0) {
+        *chunk = word.to_be_bytes();
     }
 }
 
@@ -194,15 +194,15 @@ pub fn leading_zero_bytes(input: &[u8]) -> usize {
         return 0;
     }
     let mut count = 0;
-    let mut words = input.chunks_exact(8);
-    for word in words.by_ref() {
-        let value = u64::from_le_bytes(unwrap_eight(word));
+    let (words, tail) = input.as_chunks::<8>();
+    for word in words {
+        let value = u64::from_le_bytes(*word);
         if value != 0 {
             return count + (value.trailing_zeros() / 8) as usize;
         }
         count += 8;
     }
-    for byte in words.remainder() {
+    for byte in tail {
         if *byte != 0 {
             break;
         }
@@ -368,7 +368,7 @@ pub(crate) fn to_chars<const LIMBS: usize, const PADDED: usize>(
     let mut carry = 0u64;
     for (limb, slot) in limbs
         .iter()
-        .zip(chars[..spelled].chunks_exact_mut(DIGITS_PER_LIMB))
+        .zip(chars[..spelled].as_chunks_mut::<DIGITS_PER_LIMB>().0)
         .rev()
     {
         let settled = limb + carry;
@@ -464,7 +464,7 @@ pub(crate) fn limbs_from_encoded<const LIMBS: usize, const DIGITS: usize>(
 
     let mut limbs = [0u32; LIMBS];
     let mut seen = 0u8;
-    for (limb, group) in limbs.iter_mut().zip(chars.chunks_exact(DIGITS_PER_LIMB)) {
+    for (limb, group) in limbs.iter_mut().zip(chars.as_chunks::<DIGITS_PER_LIMB>().0) {
         let mut value = 0u32;
         for byte in group {
             let digit = INVERSE[*byte as usize];

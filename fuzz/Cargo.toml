@@ -1,0 +1,34 @@
+[package]
+name = "tape-base58-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Standalone rather than a workspace member, so the published crate carries
+# neither these targets nor the dependencies they need.
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+bs58 = "0.5"
+libfuzzer-sys = "0.4"
+tape-base58 = { path = ".." }
+
+[[bin]]
+name = "decode"
+path = "fuzz_targets/decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "roundtrip"
+path = "fuzz_targets/roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = true

@@ -80,3 +80,16 @@ impl fmt::Display for EncodeError {
         }
     }
 }
+
+impl core::error::Error for DecodeError {}
+
+impl core::error::Error for BatchError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            BatchError::OutputTooSmall => None,
+            BatchError::Input { error, .. } => Some(error),
+        }
+    }
+}
+
+impl core::error::Error for EncodeError {}

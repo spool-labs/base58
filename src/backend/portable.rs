@@ -3,6 +3,7 @@
 use crate::error::DecodeError;
 use crate::scalar::{self, LIMBS_32, LIMBS_64, WORDS_32, WORDS_64};
 use crate::tables::{DECODE_32, DECODE_64};
+use crate::{MAX_ENCODED_32, MAX_ENCODED_64};
 
 /// The portable ends, which are the only ones a machine with no vector path has
 pub(crate) use crate::scalar::{read_32, read_64, write_32, write_64};
@@ -23,11 +24,11 @@ pub(crate) fn words_64_lanes<const LANES: usize>(
     scalar::words_lanes(limbs, &DECODE_64, wide)
 }
 
-pub(crate) fn encode_32(input: &[u8; 32], out: &mut [u8; crate::MAX_ENCODED_32]) -> usize {
+pub(crate) fn encode_32(input: &[u8; 32], out: &mut [u8; MAX_ENCODED_32]) -> usize {
     scalar::encode_32(input, out)
 }
 
-pub(crate) fn encode_64(input: &[u8; 64], out: &mut [u8; crate::MAX_ENCODED_64]) -> usize {
+pub(crate) fn encode_64(input: &[u8; 64], out: &mut [u8; MAX_ENCODED_64]) -> usize {
     scalar::encode_64(input, out)
 }
 

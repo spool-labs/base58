@@ -1,0 +1,100 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: fmt and clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets
+
+  test:
+    name: test (${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x86-64
+          - os: macos-latest
+            arch: aarch64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Both profiles: debug catches the overflow checks, release catches what
+      # only shows up once the optimiser has been through the kernels.
+      - run: cargo test
+      - run: cargo test --release
+      # The benchmarks are a separate workspace and break silently when the
+      # library's signatures move, so they are typechecked here.
+      - run: cargo check --benches
+        working-directory: bench
+
+  portable:
+    name: portable backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv6m-none-eabi
+      - uses: Swatinem/rust-cache@v2
+      # No vector units and no std, which is the arm neither runner reaches.
+      - run: cargo build --lib --target thumbv6m-none-eabi
+
+  msrv:
+    name: msrv
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.89
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --lib
+
+  fuzz:
+    name: fuzz
+    runs-on: ubuntu-latest
+    # Nightly carries lints the pinned toolchains do not, and a fuzz run is
+    # not the place to find out about them.
+    env:
+      RUSTFLAGS: ""
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      - uses: Swatinem/rust-cache@v2
+      # A smoke run, not a campaign. Long runs belong on a box, not on a pull
+      # request.
+      - run: cargo fuzz run --target x86_64-unknown-linux-gnu decode -- -max_total_time=60
+      - run: cargo fuzz run --target x86_64-unknown-linux-gnu roundtrip -- -max_total_time=60
