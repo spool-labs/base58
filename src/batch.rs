@@ -27,8 +27,8 @@ pub fn encode_32_batch(
     if out.len() < inputs.len() * crate::MAX_ENCODED_32 || lengths.len() < inputs.len() {
         return Err(EncodeError::OutputTooSmall);
     }
-    if backend::is_encode_32_direct() {
-        let (slots, _) = out.as_chunks_mut::<{ crate::MAX_ENCODED_32 }>();
+    let (slots, _) = out.as_chunks_mut::<{ crate::MAX_ENCODED_32 }>();
+    if backend::IS_ENCODE_32_DIRECT {
         for ((input, slot), length) in inputs.iter().zip(slots).zip(lengths.iter_mut()) {
             *length = backend::encode_32(input, slot);
         }
@@ -44,11 +44,11 @@ pub fn encode_32_batch(
             &mut limbs, &words, &ENCODE_32,
         );
         for lane in 0..chunk.len() {
-            let at = (group * LANES + lane) * crate::MAX_ENCODED_32;
-            lengths[group * LANES + lane] = backend::write_32(
+            let at = group * LANES + lane;
+            lengths[at] = backend::write_32(
                 limbs[lane],
                 scalar::leading_zero_bytes(&chunk[lane]),
-                &mut out[at..at + crate::MAX_ENCODED_32],
+                &mut slots[at],
             );
         }
     }
@@ -64,9 +64,9 @@ pub fn encode_64_batch(
     if out.len() < inputs.len() * crate::MAX_ENCODED_64 || lengths.len() < inputs.len() {
         return Err(EncodeError::OutputTooSmall);
     }
+    let (slots, _) = out.as_chunks_mut::<{ crate::MAX_ENCODED_64 }>();
     if backend::is_encode_64_direct() {
-        let (slots, _) = out.as_chunks_mut::<{ crate::MAX_ENCODED_64 }>();
-        for ((input, slot), length) in inputs.iter().zip(slots).zip(lengths.iter_mut()) {
+        for ((input, slot), length) in inputs.iter().zip(slots.iter_mut()).zip(lengths.iter_mut()) {
             *length = backend::encode_64(input, slot);
         }
         return Ok(());
@@ -87,11 +87,11 @@ pub fn encode_64_batch(
             &mut limbs, &words, &ENCODE_64,
         );
         for lane in 0..chunk.len() {
-            let at = (group * LANES + lane) * crate::MAX_ENCODED_64;
-            lengths[group * LANES + lane] = backend::write_64(
+            let at = group * LANES + lane;
+            lengths[at] = backend::write_64(
                 limbs[lane],
                 scalar::leading_zero_bytes(&chunk[lane]),
-                &mut out[at..at + crate::MAX_ENCODED_64],
+                &mut slots[at],
             );
         }
     }
@@ -107,7 +107,7 @@ pub fn decode_32_batch(encoded: &[&[u8]], out: &mut [[u8; 32]]) -> Result<(), Ba
     if out.len() < encoded.len() {
         return Err(BatchError::OutputTooSmall);
     }
-    if backend::is_decode_32_direct() {
+    if backend::IS_DECODE_32_DIRECT {
         for (at, (input, slot)) in encoded.iter().zip(out.iter_mut()).enumerate() {
             backend::decode_32(input, slot).map_err(blame(at))?;
         }
@@ -135,7 +135,7 @@ pub fn decode_64_batch(encoded: &[&[u8]], out: &mut [[u8; 64]]) -> Result<(), Ba
     if out.len() < encoded.len() {
         return Err(BatchError::OutputTooSmall);
     }
-    if backend::is_decode_64_direct() {
+    if backend::IS_DECODE_64_DIRECT {
         for (at, (input, slot)) in encoded.iter().zip(out.iter_mut()).enumerate() {
             backend::decode_64(input, slot).map_err(blame(at))?;
         }

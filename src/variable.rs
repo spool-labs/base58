@@ -20,14 +20,13 @@ pub const MAX_VARIABLE_LEN: usize = 1232;
 /// Longest input this codec accepts at all
 ///
 /// The conversion is quadratic, so the ceiling is what bounds the work one
-/// call can buy with a length it chose. Without an allocator the stack scratch
-/// is the tighter of the two.
-#[cfg(feature = "alloc")]
-pub const MAX_ACCEPTED_LEN: usize = 4096;
-
-/// Longest input this codec accepts at all, which is what the stack holds
-#[cfg(not(feature = "alloc"))]
-pub const MAX_ACCEPTED_LEN: usize = MAX_VARIABLE_LEN;
+/// call can buy with a length it chose: 4096 bytes is the last width that
+/// converts in about a hundred microseconds, and four times that costs over a
+/// millisecond. Without an allocator the stack scratch is the ceiling instead.
+pub const MAX_ACCEPTED_LEN: usize = match cfg!(feature = "alloc") {
+    true => 4096,
+    false => MAX_VARIABLE_LEN,
+};
 
 /// Words the widest input occupies
 const MAX_WORDS: usize = MAX_VARIABLE_LEN.div_ceil(4);

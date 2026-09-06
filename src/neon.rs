@@ -6,8 +6,8 @@
 //! inverted, which replaces a table load and a branch for every character.
 
 use core::arch::aarch64::{
-    uint8x16_t, vaddq_u64, vceqzq_u8, vdupq_n_u64, vdupq_n_u8, vget_lane_u64, vld1_u32, vld1q_u8, vld1q_u8_x4,
-    vminq_u8, vminvq_u8, vmlal_n_u32, vorrq_u8, vqtbl4q_u8, vreinterpret_u64_u8,
+    uint8x16_t, vaddq_u64, vceqzq_u8, vdupq_n_u64, vdupq_n_u8, vget_lane_u64, vld1_u32, vld1q_u8,
+    vld1q_u8_x4, vminq_u8, vminvq_u8, vmlal_n_u32, vorrq_u8, vqtbl4q_u8, vreinterpret_u64_u8,
     vreinterpretq_u16_u8, vshrn_n_u16, vst1q_u64, vst1q_u8, vsubq_u8,
 };
 
@@ -180,13 +180,16 @@ unsafe fn map_chunk(characters: uint8x16_t) -> uint8x16_t {
 /// chain runs. Which set a limb lands in is a branch rather than a reference
 /// picked between two arrays: a picked reference is a pointer the optimizer
 /// cannot see through, and it puts both sets in memory.
+#[inline]
 pub(crate) fn words_from_limbs<const LIMBS: usize, const WORDS: usize, const PAIRS: usize>(
     limbs: &[u32; LIMBS],
     table: &[[u32; WORDS]; LIMBS],
     wide: &mut [u64; WORDS],
 ) {
+    const { assert!(PAIRS * 2 == WORDS) };
     // SAFETY: a pair load reads two entries of a row that holds `WORDS` of
-    // them, and every store covers a pair of the words the caller owns.
+    // them, and the stores cover `PAIRS` pairs of the `WORDS` words the caller
+    // owns.
     unsafe {
         let mut even = [vdupq_n_u64(0); PAIRS];
         let mut odd = [vdupq_n_u64(0); PAIRS];

@@ -30,9 +30,9 @@ use crate::scalar::{
 };
 use crate::tables::ENCODE_64;
 use crate::wide::{
-    widen_shift, Aligned, DECODE_32_WIDE, DECODE_64_WIDE, ENCODE_32_TAIL, ENCODE_32_WIDE,
-    FLIP_WORDS, HEAD_WEIGHT, MAGIC_3364, MAGIC_58, MAGIC_HIGH, MAGIC_LOW, MAGIC_SMALL,
-    MIN_ENCODED_32, MIN_ENCODED_64, PAIR_3364, PAIR_58,
+    skip_32, skip_64, widen_shift, Aligned, DECODE_32_WIDE, DECODE_64_WIDE, ENCODE_32_TAIL,
+    ENCODE_32_WIDE, FLIP_WORDS, HEAD_WEIGHT, MAGIC_3364, MAGIC_58, MAGIC_HIGH, MAGIC_LOW,
+    MAGIC_SMALL, MIN_ENCODED_32, MIN_ENCODED_64, PAIR_3364, PAIR_58,
 };
 use crate::{MAX_ENCODED_32, MAX_ENCODED_64};
 
@@ -405,10 +405,7 @@ unsafe fn spell_90(terms: [__m256i; 5], input_zeros: usize, out: &mut [u8]) -> u
         let chars_low = to_chars(packed_low);
         let chars_middle = to_chars(packed_middle);
         let chars_high = to_chars(packed_high);
-        // A count from corrupt digits would otherwise store past the buffer.
-        let skip = leading
-            .saturating_sub(input_zeros)
-            .clamp(DIGITS_64 - MAX_ENCODED_64, DIGITS_64 - MIN_ENCODED_64);
+        let skip = skip_64(leading, input_zeros);
         store_90(out.as_mut_ptr(), chars_low, chars_middle, chars_high, skip);
         DIGITS_64 - skip
     }
@@ -745,11 +742,7 @@ unsafe fn spell_45(
         let low16 = _mm256_castsi256_si128(chars_low);
         let high16 = _mm256_extractf128_si256::<1>(chars_low);
 
-        // A count from corrupt digits would otherwise leave the table or store
-        // past the buffer.
-        let skip = leading
-            .saturating_sub(input_zeros)
-            .clamp(DIGITS_32 - MAX_ENCODED_32, DIGITS_32 - MIN_ENCODED_32);
+        let skip = skip_32(leading, input_zeros);
         let masks = ALIGN_SKIP.0[skip].as_ptr();
         let select_low = _mm_load_si128(masks as *const __m128i);
         let select_high = _mm_load_si128(masks.add(16) as *const __m128i);

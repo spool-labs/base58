@@ -3,8 +3,9 @@
 //! `vpmuludq` reads the low 32 bits of each 64-bit lane, so the generated
 //! tables are widened to u64 at compile time rather than converted per use.
 
-use crate::scalar::LIMB_BASE;
+use crate::scalar::{DIGITS_32, DIGITS_64, LIMB_BASE};
 use crate::tables::{DECODE_32, DECODE_64};
+use crate::{KEY_LEN, MAX_ENCODED_32, MAX_ENCODED_64, SIGNATURE_LEN};
 
 /// A table laid out on a cache line, which the aligned loads require
 #[repr(align(64))]
@@ -89,10 +90,26 @@ const fn flip_words() -> [u8; 32] {
 }
 
 /// Shortest encoding a key can produce, which is one character per zero byte
-pub(crate) const MIN_ENCODED_32: usize = 32;
+pub(crate) const MIN_ENCODED_32: usize = KEY_LEN;
 
 /// Shortest encoding a signature can produce
-pub(crate) const MIN_ENCODED_64: usize = 64;
+pub(crate) const MIN_ENCODED_64: usize = SIGNATURE_LEN;
+
+/// Characters a spelled key drops from the front: its leading zero digits less
+/// the one kept per zero byte, held to the range a key's encoding allows so a
+/// count that disagrees with `input_zeros` cannot reach past the buffer
+pub(crate) fn skip_32(leading: usize, input_zeros: usize) -> usize {
+    let skip = leading.saturating_sub(input_zeros);
+    debug_assert!((DIGITS_32 - MAX_ENCODED_32..=DIGITS_32 - MIN_ENCODED_32).contains(&skip));
+    skip.clamp(DIGITS_32 - MAX_ENCODED_32, DIGITS_32 - MIN_ENCODED_32)
+}
+
+/// The same for a signature
+pub(crate) fn skip_64(leading: usize, input_zeros: usize) -> usize {
+    let skip = leading.saturating_sub(input_zeros);
+    debug_assert!((DIGITS_64 - MAX_ENCODED_64..=DIGITS_64 - MIN_ENCODED_64).contains(&skip));
+    skip.clamp(DIGITS_64 - MAX_ENCODED_64, DIGITS_64 - MIN_ENCODED_64)
+}
 
 /// The limb base with its five factors of two removed
 ///

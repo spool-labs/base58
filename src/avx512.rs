@@ -35,11 +35,10 @@ use crate::scalar::{
 };
 use crate::tables::ENCODE_64;
 use crate::wide::{
-    widen_shift, Aligned, DECODE_64_WIDE, ENCODE_32_TAIL, ENCODE_32_WIDE, FLIP_WORDS, HEAD_WEIGHT,
-    MAGIC_3364, MAGIC_58, MAGIC_HIGH, MAGIC_LOW, MAGIC_SMALL, MIN_ENCODED_32, MIN_ENCODED_64,
-    PAIR_3364, PAIR_58,
+    skip_32, skip_64, widen_shift, Aligned, DECODE_64_WIDE, ENCODE_32_TAIL, ENCODE_32_WIDE,
+    FLIP_WORDS, HEAD_WEIGHT, MAGIC_3364, MAGIC_58, MAGIC_HIGH, MAGIC_LOW, MAGIC_SMALL, PAIR_3364,
+    PAIR_58,
 };
-use crate::{MAX_ENCODED_32, MAX_ENCODED_64};
 
 /// One plus the digit, so that zero marks a byte outside the alphabet
 ///
@@ -489,11 +488,7 @@ unsafe fn encode_32_body(words: &[u32; WORDS_32], input_zeros: usize, out: &mut 
         // the mask moved up instead, reads as the cheaper form and measured
         // sixty percent worse: the masked-off lanes reach behind the buffer
         // and the core takes an assist for it.
-        //
-        // A count from corrupt digits would otherwise widen the store mask.
-        let skip = leading
-            .saturating_sub(input_zeros)
-            .clamp(DIGITS_32 - MAX_ENCODED_32, DIGITS_32 - MIN_ENCODED_32);
+        let skip = skip_32(leading, input_zeros);
         let shift = _mm512_add_epi8(load(IOTA.0.as_ptr()), _mm512_set1_epi8(skip as i8));
         let written = DIGITS_32 - skip;
         _mm512_mask_storeu_epi8(
@@ -589,10 +584,7 @@ unsafe fn spell_90(terms: [__m512i; 3], input_zeros: usize, out: &mut [u8]) -> u
         let chars_low = _mm512_permutexvar_epi8(digits_low, alphabet);
         let chars_high = _mm512_permutexvar_epi8(digits_high, alphabet);
 
-        // A count from corrupt digits would otherwise widen the store mask.
-        let skip = leading
-            .saturating_sub(input_zeros)
-            .clamp(DIGITS_64 - MAX_ENCODED_64, DIGITS_64 - MIN_ENCODED_64);
+        let skip = skip_64(leading, input_zeros);
         let shift = _mm512_add_epi8(load(IOTA.0.as_ptr()), _mm512_set1_epi8(skip as i8));
         let out_ptr = out.as_mut_ptr();
         _mm512_storeu_si512(

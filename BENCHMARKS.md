@@ -408,7 +408,8 @@ exists: four times the input is about fifteen times the work.
 | 65536 | 29.1 ms | 20.3 ms |
 
 The two widest rows predate the ceiling and are no longer reachable through
-the public API. They are why it is where it is.
+the public API. They are the measurement the ceiling was set on: 4096 is the
+last width that converts in about a hundred microseconds.
 
 Programs build with `default-features = false` and keep the stack path, which
 tops out at `MAX_VARIABLE_LEN`.
