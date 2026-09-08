@@ -6,8 +6,8 @@
 //! inverted, which replaces a table load and a branch for every character.
 
 use core::arch::aarch64::{
-    uint8x16_t, vceqzq_u8, vdupq_n_u64, vdupq_n_u8, vget_lane_u64, vld1_u32, vld1q_u8, vld1q_u8_x4,
-    vminq_u8, vminvq_u8, vmlal_n_u32, vorrq_u8, vqtbl4q_u8, vreinterpret_u64_u8,
+    uint8x16_t, vaddq_u64, vceqzq_u8, vdupq_n_u64, vdupq_n_u8, vget_lane_u64, vld1_u32, vld1q_u8,
+    vld1q_u8_x4, vminq_u8, vminvq_u8, vmlal_n_u32, vorrq_u8, vqtbl4q_u8, vreinterpret_u64_u8,
     vreinterpretq_u16_u8, vshrn_n_u16, vst1q_u64, vst1q_u8, vsubq_u8,
 };
 
@@ -177,35 +177,43 @@ unsafe fn map_chunk(characters: uint8x16_t) -> uint8x16_t {
 /// A limb is below the limb base and a table entry is a word, so each product
 /// widens from 32 bits and one instruction does two of them and accumulates.
 /// Two accumulator sets alternate by limb, which halves how deep the dependent
-/// chain runs.
+/// chain runs. Which set a limb lands in is a branch rather than a reference
+/// picked between two arrays: a picked reference is a pointer the optimizer
+/// cannot see through, and it puts both sets in memory.
+#[inline]
 pub(crate) fn words_from_limbs<const LIMBS: usize, const WORDS: usize, const PAIRS: usize>(
     limbs: &[u32; LIMBS],
     table: &[[u32; WORDS]; LIMBS],
     wide: &mut [u64; WORDS],
 ) {
-    let mut even = [[0u64; 2]; PAIRS];
-    let mut odd = [[0u64; 2]; PAIRS];
-    // SAFETY: every access is bounded by the array lengths the types carry.
+    const { assert!(PAIRS * 2 == WORDS) };
+    // SAFETY: a pair load reads two entries of a row that holds `WORDS` of
+    // them, and the stores cover `PAIRS` pairs of the `WORDS` words the caller
+    // owns.
     unsafe {
-        let mut even_lanes = [vdupq_n_u64(0); PAIRS];
-        let mut odd_lanes = [vdupq_n_u64(0); PAIRS];
+        let mut even = [vdupq_n_u64(0); PAIRS];
+        let mut odd = [vdupq_n_u64(0); PAIRS];
         for (at, row) in table.iter().enumerate() {
             let limb = limbs[at];
-            let lanes = match at & 1 {
-                0 => &mut even_lanes,
-                _ => &mut odd_lanes,
-            };
-            for (pair, lane) in lanes.iter_mut().enumerate() {
-                *lane = vmlal_n_u32(*lane, vld1_u32(row.as_ptr().add(pair * 2)), limb);
+            let entries = row.as_ptr();
+            match at & 1 {
+                0 => {
+                    for (pair, lane) in even.iter_mut().enumerate() {
+                        *lane = vmlal_n_u32(*lane, vld1_u32(entries.add(pair * 2)), limb);
+                    }
+                }
+                _ => {
+                    for (pair, lane) in odd.iter_mut().enumerate() {
+                        *lane = vmlal_n_u32(*lane, vld1_u32(entries.add(pair * 2)), limb);
+                    }
+                }
             }
         }
         for pair in 0..PAIRS {
-            vst1q_u64(even[pair].as_mut_ptr(), even_lanes[pair]);
-            vst1q_u64(odd[pair].as_mut_ptr(), odd_lanes[pair]);
+            vst1q_u64(
+                wide.as_mut_ptr().add(pair * 2),
+                vaddq_u64(even[pair], odd[pair]),
+            );
         }
-    }
-    for pair in 0..PAIRS {
-        wide[pair * 2] = even[pair][0] + odd[pair][0];
-        wide[pair * 2 + 1] = even[pair][1] + odd[pair][1];
     }
 }

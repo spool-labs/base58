@@ -1,6 +1,8 @@
 //! Holds the codec to what a reference implementation produces
 
-use tape_base58::{BatchError, DecodeError, MAX_ENCODED_32, MAX_ENCODED_64, MAX_VARIABLE_LEN};
+use tape_base58::{
+    BatchError, DecodeError, MAX_ACCEPTED_LEN, MAX_ENCODED_32, MAX_ENCODED_64, MAX_VARIABLE_LEN,
+};
 
 /// Deterministic bytes, so a failure is reproducible without a seed to carry
 fn noise(seed: u64, into: &mut [u8]) {
@@ -23,6 +25,20 @@ fn encoded_64(input: &[u8; 64]) -> Vec<u8> {
     let mut out = [0u8; MAX_ENCODED_64];
     let len = tape_base58::encode_64(input, &mut out) as usize;
     out[..len].to_vec()
+}
+
+/// Encode against the reference and decode back, at a length the codec takes
+fn round_trip(input: &[u8]) {
+    let len = input.len();
+    let expected = bs58::encode(input).into_vec();
+
+    let mut out = vec![0u8; tape_base58::encoded_len(len)];
+    let written = tape_base58::encode(input, &mut out).expect("encode");
+    assert_eq!(&out[..written], &expected[..], "length {len}");
+
+    let mut back = vec![0u8; tape_base58::decoded_len(written)];
+    let read = tape_base58::decode(&out[..written], &mut back).expect("decode");
+    assert_eq!(&back[..read], input, "length {len}");
 }
 
 // a key matches the reference at every count of leading zero bytes
@@ -79,39 +95,50 @@ fn random_fixed() {
     }
 }
 
-// the limit is a whole Solana packet, and one byte past it is refused
+// a whole Solana packet is what the stack path holds
 #[test]
 fn variable_limit() {
     for len in [MAX_VARIABLE_LEN - 1, MAX_VARIABLE_LEN] {
         let mut input = vec![0u8; len];
         noise(len as u64 + 23, &mut input);
-        let expected = bs58::encode(&input).into_vec();
-
-        let mut out = vec![0u8; tape_base58::encoded_len(len)];
-        let written = tape_base58::encode(&input, &mut out).expect("encode");
-        assert_eq!(&out[..written], &expected[..], "length {len}");
-
-        let mut back = vec![0u8; tape_base58::decoded_len(expected.len())];
-        let read = tape_base58::decode(&expected, &mut back).expect("decode");
-        assert_eq!(&back[..read], &input[..], "length {len}");
-    }
-
-    #[cfg(not(feature = "alloc"))]
-    {
-        let past = vec![7u8; MAX_VARIABLE_LEN + 1];
-        let mut out = vec![0u8; tape_base58::encoded_len(past.len())];
-        assert_eq!(
-            tape_base58::encode(&past, &mut out),
-            Err(tape_base58::EncodeError::InputTooLong)
-        );
+        round_trip(&input);
     }
 }
 
-// an encoding standing for more bytes than the stack path takes is refused
-#[cfg(not(feature = "alloc"))]
+// the ceiling is held on encode and on decode, and a length at it still converts
+#[test]
+fn accepted_limit() {
+    let mut input = vec![0u8; MAX_ACCEPTED_LEN];
+    noise(29, &mut input);
+    round_trip(&input);
+
+    let past = vec![7u8; MAX_ACCEPTED_LEN + 1];
+    let mut wide = vec![0u8; tape_base58::encoded_len(past.len())];
+    assert_eq!(
+        tape_base58::encode(&past, &mut wide),
+        Err(tape_base58::EncodeError::InputTooLong)
+    );
+
+    // one character past the widest encoding the ceiling allows
+    let text = vec![b'1'; tape_base58::encoded_len(MAX_ACCEPTED_LEN) + 1];
+    let mut room = vec![0u8; tape_base58::decoded_len(text.len())];
+    assert_eq!(
+        tape_base58::decode(&text, &mut room),
+        Err(DecodeError::TooLong)
+    );
+}
+
+// a run of ones is a byte apiece, so the ceiling is held on what an encoding
+// stands for as well as on its width
 #[test]
 fn long_zeros() {
-    let text = vec![b'1'; MAX_VARIABLE_LEN + 1];
+    let text = vec![b'1'; MAX_ACCEPTED_LEN];
+    let mut out = vec![0u8; tape_base58::decoded_len(text.len())];
+    let read = tape_base58::decode(&text, &mut out).expect("decode");
+    assert_eq!(read, text.len());
+    assert!(out[..read].iter().all(|byte| *byte == 0));
+
+    let text = vec![b'1'; MAX_ACCEPTED_LEN + 1];
     let mut out = vec![0u8; tape_base58::decoded_len(text.len())];
     assert!(matches!(
         tape_base58::decode(&text, &mut out),
@@ -119,36 +146,17 @@ fn long_zeros() {
     ));
 }
 
-// an allocator lifts the length limit, at widths well past it
+// an allocator lifts the stack path's limit, at widths past it
 #[cfg(feature = "alloc")]
 #[test]
 fn past_limit() {
-    for len in [
-        MAX_VARIABLE_LEN + 1,
-        MAX_VARIABLE_LEN * 3,
-        MAX_VARIABLE_LEN * 8 + 7,
-    ] {
+    for len in [MAX_VARIABLE_LEN + 1, MAX_VARIABLE_LEN * 2] {
         let mut input = vec![0u8; len];
         noise(len as u64 + 5, &mut input);
         input[0] = 0;
         input[1] = 0;
-        let expected = bs58::encode(&input).into_vec();
-
-        let mut out = vec![0u8; tape_base58::encoded_len(len)];
-        let written = tape_base58::encode(&input, &mut out).expect("encode");
-        assert_eq!(&out[..written], &expected[..], "length {len}");
-
-        let mut back = vec![0u8; tape_base58::decoded_len(written)];
-        let read = tape_base58::decode(&out[..written], &mut back).expect("decode");
-        assert_eq!(&back[..read], &input[..], "length {len}");
+        round_trip(&input);
     }
-
-    // A run of ones is a byte apiece, which is the widest a decode can grow.
-    let text = vec![b'1'; MAX_VARIABLE_LEN * 4];
-    let mut out = vec![0u8; tape_base58::decoded_len(text.len())];
-    let read = tape_base58::decode(&text, &mut out).expect("decode");
-    assert_eq!(read, text.len());
-    assert!(out[..read].iter().all(|byte| *byte == 0));
 }
 
 // an all-zero input decodes into a buffer sized by decoded_len
@@ -175,15 +183,7 @@ fn variable_lengths() {
             input[0] = 0;
             input[1] = 0;
         }
-        let expected = bs58::encode(&input).into_vec();
-
-        let mut out = vec![0u8; tape_base58::encoded_len(len)];
-        let written = tape_base58::encode(&input, &mut out).expect("encode");
-        assert_eq!(&out[..written], &expected[..], "length {len}");
-
-        let mut back = vec![0u8; tape_base58::decoded_len(expected.len())];
-        let read = tape_base58::decode(&expected, &mut back).expect("decode");
-        assert_eq!(&back[..read], &input[..], "length {len}");
+        round_trip(&input);
     }
 }
 

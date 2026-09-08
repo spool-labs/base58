@@ -32,6 +32,17 @@ pub(crate) fn encode_64(input: &[u8; 64], out: &mut [u8; MAX_ENCODED_64]) -> usi
     scalar::encode_64(input, out)
 }
 
+// Whether a batch converts each input alone rather than interleaving lanes.
+// Nothing here converts more than one chain at a time, so a batch keeps the
+// interleaved sum that fills the multiplier.
+pub(crate) const IS_DECODE_32_DIRECT: bool = false;
+pub(crate) const IS_DECODE_64_DIRECT: bool = false;
+pub(crate) const IS_ENCODE_32_DIRECT: bool = false;
+
+pub(crate) fn is_encode_64_direct() -> bool {
+    false
+}
+
 pub(crate) fn decode_32(encoded: &[u8], out: &mut [u8; 32]) -> Result<(), DecodeError> {
     scalar::decode_32(encoded, out)
 }

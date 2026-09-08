@@ -29,6 +29,25 @@ pub(crate) fn encode_64(input: &[u8; 64], out: &mut [u8; MAX_ENCODED_64]) -> usi
     )
 }
 
+// Whether a batch converts each input alone rather than interleaving lanes.
+// The vector product covers a whole key already, so four decode lanes only add
+// the memory the interleave stages them through. The single-input encode sum
+// holds one running total per limb in a register while it walks the whole
+// input, which aarch64 has the registers for; four lanes of that do not fit,
+// so an interleaved batch stages the words and the limbs through memory and
+// loses to the same conversion run four times.
+pub(crate) const IS_DECODE_32_DIRECT: bool = true;
+pub(crate) const IS_DECODE_64_DIRECT: bool = true;
+pub(crate) const IS_ENCODE_32_DIRECT: bool = true;
+
+/// Whether a signature encodes better alone than interleaved with its neighbours
+///
+/// The vector spell here is inlined baseline code with no call boundary to
+/// re-enter, so a batch keeps the interleaved sum in front of it.
+pub(crate) fn is_encode_64_direct() -> bool {
+    false
+}
+
 /// Spell a public key's limbs, as [`scalar::sum_32`] leaves them, into characters
 ///
 /// The tail of the encoding, split out so that a caller holding limbs it
@@ -73,25 +92,16 @@ pub(crate) fn decode_64(encoded: &[u8], out: &mut [u8; 64]) -> Result<(), Decode
 
 /// Sum several keys' limbs against the decode table
 ///
-/// The vector product is already a whole register wide for one input, so the
-/// lanes go through it one at a time rather than interleaving, which would
-/// only add chains the processor finds on its own.
+/// A batch decodes each input alone on this path, so the interleaved forms are
+/// the scalar ones and only fill the seam.
 pub(crate) fn words_32_lanes<const LANES: usize>(
     limbs: &[[u32; LIMBS_32]; LANES],
     wide: &mut [[u64; WORDS_32]; LANES],
 ) {
-    for (lane, slot) in wide.iter_mut().enumerate() {
-        neon::words_from_limbs::<LIMBS_32, WORDS_32, { WORDS_32 / 2 }>(
-            &limbs[lane],
-            &DECODE_32,
-            slot,
-        );
-    }
+    scalar::words_lanes(limbs, &DECODE_32, wide)
 }
 
 /// Sum several signatures' limbs against the decode table
-///
-/// Sixteen words is past what the vector form wins on, so these interleave.
 pub(crate) fn words_64_lanes<const LANES: usize>(
     limbs: &[[u32; LIMBS_64]; LANES],
     wide: &mut [[u64; WORDS_64]; LANES],

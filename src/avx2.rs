@@ -30,9 +30,9 @@ use crate::scalar::{
 };
 use crate::tables::ENCODE_64;
 use crate::wide::{
-    widen_shift, Aligned, DECODE_32_WIDE, DECODE_64_WIDE, ENCODE_32_TAIL, ENCODE_32_WIDE,
-    FLIP_WORDS, HEAD_WEIGHT, MAGIC_3364, MAGIC_58, MAGIC_HIGH, MAGIC_LOW, MAGIC_SMALL, PAIR_3364,
-    PAIR_58,
+    skip_32, skip_64, widen_shift, Aligned, DECODE_32_WIDE, DECODE_64_WIDE, ENCODE_32_TAIL,
+    ENCODE_32_WIDE, FLIP_WORDS, HEAD_WEIGHT, MAGIC_3364, MAGIC_58, MAGIC_HIGH, MAGIC_LOW,
+    MAGIC_SMALL, MIN_ENCODED_32, MIN_ENCODED_64, PAIR_3364, PAIR_58,
 };
 use crate::{MAX_ENCODED_32, MAX_ENCODED_64};
 
@@ -44,12 +44,6 @@ const SLOTS_64: usize = 20;
 
 /// The 64-byte encode table, lane `n` of the accumulators holding limb `n`
 static ENCODE_64_SHIFTED: Aligned<[[u64; SLOTS_64]; 16]> = Aligned(widen_shift(&ENCODE_64));
-
-/// Shortest encoding a key can produce, which is one character per zero byte
-const MIN_ENCODED_32: usize = 32;
-
-/// Shortest encoding a signature can produce
-const MIN_ENCODED_64: usize = 64;
 
 /// `floor(x / 58^5)`, within two and never over, for any lane value
 #[target_feature(enable = "avx2")]
@@ -228,13 +222,6 @@ unsafe fn sum_and_settle_64(words: &[u32; WORDS_64]) -> [__m256i; 5] {
     }
 }
 
-/// The last two limbs in the low lanes of a register, the rest zero
-#[target_feature(enable = "avx2")]
-unsafe fn load_tail(first: u64, second: u64) -> __m256i {
-    // SAFETY: a register built from two values, with no memory touched.
-    _mm256_setr_epi64x(first as i64, second as i64, 0, 0)
-}
-
 /// Four limbs to their five digits each, ten bytes per 128-bit half
 ///
 /// `floor(x / 58^k) - 58 * floor(x / 58^(k+1))` per digit, so one division
@@ -382,33 +369,11 @@ unsafe fn leading_zero_digits_pair<const HIGH: usize>(low: __m256i, high: __m256
     }
 }
 
-/// Spell a signature's limbs, as `sum_64` leaves them, into characters
-///
-/// # Safety
-///
-/// As [`write_32`], with `out` at least `MAX_ENCODED_64` bytes.
-#[target_feature(enable = "avx2")]
-pub(crate) unsafe fn write_64(limbs: [u64; LIMBS_64], input_zeros: usize, out: &mut [u8]) -> usize {
-    // SAFETY: the loads read the caller's limbs.
-    unsafe {
-        let source = limbs.as_ptr() as *const __m256i;
-        let mut terms = [
-            _mm256_loadu_si256(source),
-            _mm256_loadu_si256(source.add(1)),
-            _mm256_loadu_si256(source.add(2)),
-            _mm256_loadu_si256(source.add(3)),
-            load_tail(limbs[LIMBS_64 - 2], limbs[LIMBS_64 - 1]),
-        ];
-        settle(&mut terms);
-        spell_90(terms, input_zeros, out)
-    }
-}
-
 /// Encode a signature, from its words to the string, all in registers
 ///
 /// # Safety
 ///
-/// As [`write_64`].
+/// As [`write_32`], with `out` at least `MAX_ENCODED_64` bytes.
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn encode_64(
     words: &[u32; WORDS_64],
@@ -440,7 +405,7 @@ unsafe fn spell_90(terms: [__m256i; 5], input_zeros: usize, out: &mut [u8]) -> u
         let chars_low = to_chars(packed_low);
         let chars_middle = to_chars(packed_middle);
         let chars_high = to_chars(packed_high);
-        let skip = leading - input_zeros;
+        let skip = skip_64(leading, input_zeros);
         store_90(out.as_mut_ptr(), chars_low, chars_middle, chars_high, skip);
         DIGITS_64 - skip
     }
@@ -777,11 +742,8 @@ unsafe fn spell_45(
         let low16 = _mm256_castsi256_si128(chars_low);
         let high16 = _mm256_extractf128_si256::<1>(chars_low);
 
-        // One character per zero byte stays, so the skip is 1 to 13 and the
-        // masked index cannot leave the table.
-        let skip = leading - input_zeros;
-        debug_assert!((1..=13).contains(&skip));
-        let masks = ALIGN_SKIP.0[skip & 15].as_ptr();
+        let skip = skip_32(leading, input_zeros);
+        let masks = ALIGN_SKIP.0[skip].as_ptr();
         let select_low = _mm_load_si128(masks as *const __m128i);
         let select_high = _mm_load_si128(masks.add(16) as *const __m128i);
 
