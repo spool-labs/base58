@@ -87,11 +87,11 @@ fn compare(criterion: &mut Criterion) {
     let signature = signature();
 
     let mut key_text = [0u8; MAX_ENCODED_32];
-    let key_len = encode_32(&key, &mut key_text);
+    let key_len = encode_32(&key, &mut key_text) as usize;
     let key_text = &key_text[..key_len];
 
     let mut signature_text = [0u8; MAX_ENCODED_64];
-    let signature_len = encode_64(&signature, &mut signature_text);
+    let signature_len = encode_64(&signature, &mut signature_text) as usize;
     let signature_text = &signature_text[..signature_len];
 
     let keys = [key; BATCH];

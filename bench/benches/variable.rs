@@ -1,12 +1,9 @@
 //! Times the variable length codec, which is what account data and whole
 //! transactions go through
 //!
-//! Build with `--features variable` to time the table path against the
-//! same inputs; the entry points are the same either way.
-//!
-//! Set `TAPE_PATH` to `portable`, `avx2` or `avx512` to pin the instruction
-//! set the codec dispatches to, which only `variable-simd` reads. Unset, or
-//! wider than the machine can run, and it picks for itself as usual.
+//! Set TAPE_PATH to portable, avx2 or avx512 to pin the instruction set the
+//! fixed paths dispatch to. Unset, or wider than the machine can run, and it
+//! picks for itself.
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 

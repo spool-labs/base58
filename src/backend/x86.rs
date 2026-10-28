@@ -50,30 +50,29 @@ pub(crate) fn encode_64(input: &[u8; 64], out: &mut [u8; MAX_ENCODED_64]) -> usi
     }
 }
 
-/// Spell a public key's limbs, as [`scalar::sum_32`] leaves them, into characters
+// Whether a batch converts each input alone rather than interleaving lanes.
+// Interleaving wins wherever the lane work stays in the inlined scalar walk.
+pub(crate) const IS_DECODE_32_DIRECT: bool = false;
+pub(crate) const IS_DECODE_64_DIRECT: bool = false;
+pub(crate) const IS_ENCODE_32_DIRECT: bool = false;
+
+/// Whether a signature encodes better alone than interleaved with its neighbours
 ///
-/// Portable on every path, including AVX2, and that is measured rather than
-/// left over: routing the batch's lanes through the vector spell cost 31%,
-/// because a `target_feature` call per lane neither inlines nor lets the
-/// scalar chains of neighbouring lanes overlap the way the inlined walk does.
-#[inline]
-pub(crate) fn write_32(limbs: [u64; LIMBS_32], input_zeros: usize, out: &mut [u8]) -> usize {
-    scalar::write_32(limbs, input_zeros, out)
+/// The vector encoders run the whole conversion behind one `target_feature`
+/// call, and a batch that interleaved first would re-enter that call per lane
+/// with the limbs staged through memory.
+pub(crate) fn is_encode_64_direct() -> bool {
+    !matches!(dispatch::path(), Path::Portable)
 }
 
-/// Spell a signature's limbs, as [`scalar::sum_64`] leaves them, into characters
-#[inline]
-pub(crate) fn write_64(limbs: [u64; LIMBS_64], input_zeros: usize, out: &mut [u8]) -> usize {
-    if out.len() < MAX_ENCODED_64 {
-        return scalar::write_64(limbs, input_zeros, out);
-    }
-    // SAFETY: as above.
-    match dispatch::path() {
-        Path::Wide => unsafe { avx512::write_64(limbs, input_zeros, out) },
-        Path::Avx2 => unsafe { avx2::write_64(limbs, input_zeros, out) },
-        Path::Portable => scalar::write_64(limbs, input_zeros, out),
-    }
-}
+/// The spelling ends, portable on every path including AVX2
+///
+/// Measured rather than left over: routing the batch's lanes through the
+/// vector spell cost 31%, because a `target_feature` call per lane neither
+/// inlines nor lets the scalar chains of neighbouring lanes overlap the way
+/// the inlined walk does. `write_64` is reached only from the portable batch,
+/// since a vector path encodes its signatures one at a time.
+pub(crate) use crate::scalar::{write_32, write_64};
 
 pub(crate) fn decode_32(encoded: &[u8], out: &mut [u8; 32]) -> Result<(), DecodeError> {
     let mut limbs = [0u32; LIMBS_32];

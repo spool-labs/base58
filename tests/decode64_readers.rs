@@ -49,7 +49,7 @@ fn wide_reader_matches_four_lane() {
     }
     for input in corpus() {
         let mut text = [0u8; MAX_ENCODED_64];
-        let length = encode_64(&input, &mut text);
+        let length = encode_64(&input, &mut text) as usize;
         let encoded = &text[..length];
 
         let mut wide_limbs = [0u32; 18];

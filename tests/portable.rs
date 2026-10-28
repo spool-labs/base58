@@ -46,7 +46,7 @@ fn by_leading_zeros() {
         assert_eq!(portable_32(&key), expected, "key, {zeros} leading zeros");
         assert_eq!(portable_32(&key), {
             let mut out = [0u8; MAX_ENCODED_32];
-            let len = tape_base58::encode_32(&key, &mut out);
+            let len = tape_base58::encode_32(&key, &mut out) as usize;
             out[..len].to_vec()
         });
 
@@ -69,7 +69,7 @@ fn by_leading_zeros() {
         );
         assert_eq!(portable_64(&signature), {
             let mut out = [0u8; MAX_ENCODED_64];
-            let len = tape_base58::encode_64(&signature, &mut out);
+            let len = tape_base58::encode_64(&signature, &mut out) as usize;
             out[..len].to_vec()
         });
 

@@ -18,7 +18,7 @@ fn codec(criterion: &mut Criterion) {
     let mut group = criterion.benchmark_group("tape-base58");
     let signature = signature();
     let mut signature_text = [0u8; tape_base58::MAX_ENCODED_64];
-    let written = tape_base58::encode_64(&signature, &mut signature_text);
+    let written = tape_base58::encode_64(&signature, &mut signature_text) as usize;
 
     let mut key_out = [0u8; tape_base58::MAX_ENCODED_32];
     group.bench_function("encode_32", |bencher| {

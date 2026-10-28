@@ -14,9 +14,6 @@ criterion = { version = "0.5", default-features = false, features = ["cargo_benc
 five8 = "1"
 tape-base58 = { path = ".." }
 
-[features]
-variable = ["tape-base58/variable"]
-
 [[bench]]
 name = "against"
 harness = false

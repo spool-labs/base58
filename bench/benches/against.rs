@@ -97,10 +97,10 @@ fn noise(seed: u64, into: &mut [u8]) {
 fn fixed(criterion: &mut Criterion) {
     let signature = signature();
     let mut key_out = [0u8; MAX_ENCODED_32];
-    let key_len = tape_base58::encode_32(&KEY, &mut key_out);
+    let key_len = tape_base58::encode_32(&KEY, &mut key_out) as usize;
     let key_text = key_out[..key_len].to_vec();
     let mut signature_out = [0u8; MAX_ENCODED_64];
-    let signature_len = tape_base58::encode_64(&signature, &mut signature_out);
+    let signature_len = tape_base58::encode_64(&signature, &mut signature_out) as usize;
     let signature_text = signature_out[..signature_len].to_vec();
 
     let mut key_bytes = [0u8; 32];

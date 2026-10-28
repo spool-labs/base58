@@ -5,7 +5,8 @@
 [![License](https://img.shields.io/crates/l/tape-base58.svg)](LICENSE)
 
 A fast base58 implementation for Rust, built for Solana's public keys and
-signatures. It's `no_std`, never allocates, and has no dependencies.
+signatures. It's `no_std`, has no dependencies, and only touches the heap for
+input longer than one Solana packet.
 
 ## Why it's fast
 
@@ -44,7 +45,10 @@ mislead you.
 
 ```toml
 [dependencies]
-tape-base58 = "0.1"
+tape-base58 = "0.2"
+
+# in an on-chain program:
+# tape-base58 = { version = "0.2", default-features = false }
 ```
 
 ```rust
@@ -54,7 +58,7 @@ encode_64(&[u8; 64], &mut [u8; MAX_ENCODED_64]) -> usize
 decode_32(&[u8], &mut [u8; 32]) -> Result<(), DecodeError>
 decode_64(&[u8], &mut [u8; 64]) -> Result<(), DecodeError>
 
-// Any length up to MAX_VARIABLE_LEN, which is one Solana packet.
+// Any length up to MAX_ACCEPTED_LEN, past which a call is refused.
 encode(&[u8], &mut [u8]) -> Result<usize, EncodeError>
 decode(&[u8], &mut [u8]) -> Result<usize, DecodeError>
 encoded_len(usize) -> usize
@@ -67,13 +71,21 @@ decode_32_batch(&[&[u8]], &mut [[u8; 32]]) -> Result<(), BatchError>
 decode_64_batch(&[&[u8]], &mut [[u8; 64]]) -> Result<(), BatchError>
 ```
 
-## The `variable` feature
+## Any length
 
-`encode` and `decode` work at any length without it, but they walk the value
-down one limb at a time. The `variable` feature adds about 400 KiB of
-place-value tables, which makes a 1232-byte transaction about 6x faster to
-encode and 4x faster to decode on Zen 5. Leave it out of on-chain programs.
-Its decode overflows the 4 KB SBF stack frame, and the tables would cost rent.
+Everything that isn't a key or a signature goes through `encode` and `decode`,
+which fold in a whole 64-byte block at a time. The value is reduced once per
+block instead of once per word, and the multiply that does the rest has no
+serial chain. The fold works in place inside a small window, which keeps the
+stack frame small enough for SBF. Below 128 bytes there's no whole block, and
+dividing the value down is cheaper anyway. On an M4, a 1232-byte transaction
+encodes in 7.3 µs, against 1.41 ms for `bs58`.
+
+The conversion is still quadratic, so input is capped at `MAX_ACCEPTED_LEN`,
+which stops one call from being made arbitrarily expensive by its length. With
+the default `alloc` feature the cap is 4096 bytes, with heap scratch past one
+packet. Without it the cap is one packet (1232 bytes) and nothing allocates,
+which is what an on-chain program wants.
 
 ## Credits
 
